@@ -473,10 +473,9 @@ export function parseFrBilanRows(rows, meta = {}) {
   const joinedText = rowsToText(rows);
   const docUnit = detectUnit(joinedText);
   const pageUnits = rows._pageUnits;
-  // `unit` defaults to the doc-wide value; `mult` is kept for convenience but
-  // the per-KPI getKpi path now multiplies with the matched row's page-unit.
-  const unit = docUnit;
-
+  // Unit is applied per-KPI inside getKpi via chooseBestUnit — it weighs
+  // the matched row's page-local unit against the document-wide one and
+  // picks whichever lands in a plausible corporate magnitude.
   const targetYear = meta.dateCloture ? String(meta.dateCloture).slice(0, 4) : null;
   const headersByPage = collectYearHeaders(rows);
 

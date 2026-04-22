@@ -6,16 +6,32 @@ Kontur ruft on-demand die offenen Unternehmensregister der EU-Mitgliedstaaten
 (plus EWR/UK) über einen einheitlichen Adapter-Layer auf. Jeder Treffer wird
 in ein normalisiertes Company-DTO überführt und lokal gecacht.
 
-## Status — Phase A (Gerüst)
+## Status — Phase B (Live-Adapter)
 
 | Bereich | Zustand |
 | --- | --- |
 | Adapter-Interface (`server/adapters/base.js`) | ✅ |
 | Registry + Cross-Country-Search (`server/adapters/registry.js`) | ✅ |
-| Stub-Adapter | AT, DE (Fixtures) |
-| DB-Schema `(country, national_id)` | ✅ |
-| Country-agnostic Health-Score + Peer-Grouping | behalten, noch nicht verdrahtet |
-| Frontend | Minimaler Country-Dropdown + Such-View |
+| **AT** — JustizOnline IWG | ✅ Live, inkl. XML/PDF-Bilanzen |
+| **NO** — Brønnøysund Enhetsregisteret | ✅ Live |
+| **FR** — INPI RNE | ✅ Live — Firmen + Organe + Bilanz-KPIs (heuristisch aus PDF/OCR) |
+| **CZ, FI** — ARES / PRH | ✅ Live (ohne Finanzen) |
+| **DE, SE, PL, IT, ES, NL, BE, IE** | GLEIF-basierter Übergang (nur LEI-Firmen) |
+| **UK** — Companies House | Adapter bereit, braucht API-Key in `.env` |
+| DB-Schema `(country, national_id)` + financials_yearly | ✅ |
+| Health-Score + Kennzahlen | ✅ verdrahtet, sichtbar im Detail-View |
+| Frontend | Country-Dropdown, Such-View, Detail mit Organe/Kennzahlen/Score |
+
+### FR-KPI-Extraktion (Stand: Round 16)
+
+| Metrik | Ergebnis | Ziel |
+| --- | --- | --- |
+| Coverage (SIRENs mit ≥1 Bilanz) | **90 %** (9/10) | ≥ 90 % |
+| KPI-Tiefe (⌀ gefüllte KPIs pro Firma) | **91 %** (4.56/5) | ≥ 90 % |
+
+Testsample: LVMH, L'Oréal, Danone, TotalEnergies, Renault, Carrefour, Sanofi,
+Michelin, Orange, BNP Paribas. Ausführung: `npm run eval:fr` (Server muss
+laufen).
 
 ## Architektur
 
@@ -58,10 +74,12 @@ GET  /api/company/:country/:id             Einzellookup (ISO-Land + national_id)
 
 ## Nächste Phasen
 
-- **B** — Echte Adapter: AT (IWG SOAP), DE (Bundesanzeiger), FR (INPI), BE (KBO), NO (Brreg), DK (CVR)
-- **C** — Tier-1-Komplettierung: FI, EE, LV, CZ, UK
-- **D** — PL, SK, IE + GLEIF-Fallback für Rest-EU
-- **E** — Health-Score/Peer-Benchmarks reaktivieren (wo Bilanzdaten da sind), Attribution-UI
+- **C** — UK Companies House (bester freier API mit strukturierten Finanzen),
+  DE Bundesanzeiger-Scraper, BE KBO, DK CVR
+- **D** — Skandinavien vollständig (SE Bolagsverket, FI PRH erweitert, IS
+  Fyrirtækjaskrá), Osteuropa (PL, SK, HU)
+- **E** — Health-Score-Peer-Benchmarks über Länder hinweg (derzeit nur AT/FR/NO
+  Bilanzen), Attribution-UI
 
 ## Lizenz
 

@@ -94,9 +94,9 @@ Launch-Konfig in `.claude/launch.json` (`name: "kontur"`) — startet via
 - **Bilanz-Parser-Regel**: Wenn du Patterns änderst, immer mit
   `node -e` gegen eine bekannte PDF testen (siehe Danone / LVMH / Renault
   als kanonische Fälle) bevor ein Eval läuft
-- **Eval-Harness**: `/tmp/fr_eval.mjs` fährt 10 SIRENs durch und berechnet
-  Coverage + KPI-depth. Target: beide ≥ 90 %. Die Datei liegt unter `/tmp`
-  absichtlich (projektfremd, darf nicht committet werden)
+- **Eval-Harness**: `npm run eval:fr` (bzw. `scripts/fr-eval.mjs`) fährt
+  10 SIRENs durch und berechnet Coverage + KPI-depth. Target: beide ≥ 90 %.
+  Server muss vorher gestartet sein.
 
 ## Bekannte Limitationen
 
@@ -116,6 +116,6 @@ node -e "import('./server/adapters/fr.js').then(async m => {
   console.log(await a.getCompany('552032534'));
 });"
 
-# komplettes Eval (dauert mit Cache ~2-4 min, ohne Cache 15+ min)
-node /tmp/fr_eval.mjs
+# komplettes Eval (dauert mit OCR-Cache ~2-4 min, ohne 15+ min)
+npm run eval:fr
 ```
