@@ -11,7 +11,7 @@ import { loadEnv } from './env.js';
 loadEnv();
 import { migrate } from './db/index.js';
 import { listCountries, getAdapter, searchAll } from './adapters/registry.js';
-import { upsertCompany, readCompany, upsertFinancials, readFinancials } from './normalize.js';
+import { upsertCompany, readCompany, upsertFinancials, readFinancials, searchCompaniesLocal } from './normalize.js';
 import { canonId, AdapterError } from './adapters/base.js';
 import { enrichWithGleif } from './adapters/gleif-enrich.js';
 import { computeHealthScore } from './analytics/health-score.js';
@@ -46,13 +46,37 @@ app.get('/api/search', async (req, res) => {
   const cacheKey = `${countryFilter ? countryFilter.join(',') : '*'}::${q.toLowerCase()}`;
   try {
     const results = await searchCache.wrap(cacheKey, () => searchAll(q, countryFilter));
+
+    // 1) Local-cache prepend. Upstream registers rank small shops above
+    //    the flagship entities when the query matches both (e.g. INPI on
+    //    "Renault"). We inject companies from our own DB that already
+    //    have Kennzahlen cached at the top of their country group so the
+    //    "big names" always surface first.
+    const prependByCountry = new Map();   // country → DTO[]
+    const targetCountries = countryFilter
+      ? countryFilter
+      : [...new Set(results.map((g) => g.country))];
+    for (const cc of targetCountries) {
+      const local = searchCompaniesLocal(q, { country: cc, onlyWithFinancials: true, limit: 5 });
+      if (local.length) prependByCountry.set(cc, local);
+    }
+
     for (const group of results) {
+      const prepend = prependByCountry.get(group.country) || [];
+      if (prepend.length) {
+        const seen = new Set(group.hits.map((h) => h.nationalIdCanon));
+        const merged = [
+          ...prepend.filter((h) => !seen.has(h.nationalIdCanon)),
+          ...group.hits,
+        ];
+        group.hits = merged;
+      }
+
+      // 2) Attach the most recent cached Kennzahlen (zero-cost DB lookup)
+      //    so the frontend can render the inline KPI strip without a
+      //    follow-up company fetch. Never-looked-up companies get nothing.
       for (const hit of group.hits) {
         upsertCompany(hit);
-        // Attach the most recent cached Kennzahlen (read-only, zero-cost
-        // DB lookup). Lets the frontend show Umsatz/Bilanz/EK-Quote inline
-        // in the hit list without triggering a full company fetch per row.
-        // Never-looked-up companies simply get no summary.
         const rows = readFinancials(hit.country, hit.nationalIdCanon);
         if (rows.length) {
           const latest = rows[rows.length - 1];

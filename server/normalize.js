@@ -48,6 +48,40 @@ export function readCompany(country, nationalIdCanon) {
   return rowToDTO(row);
 }
 
+/**
+ * Search locally-cached companies by name (LIKE match, case-insensitive).
+ * Used by /api/search to prepend companies from our own DB that the upstream
+ * register wouldn't rank highly — this is how a query like "Renault" gets
+ * Renault SA at the top even though INPI buries it under small shops.
+ *
+ * Optional `country` narrows the search; `onlyWithFinancials` restricts to
+ * rows that already have KPIs in financials_yearly (the practical goal is
+ * to surface companies the user can see Kennzahlen for).
+ */
+export function searchCompaniesLocal(query, { country = null, onlyWithFinancials = false, limit = 10 } = {}) {
+  const q = String(query || '').trim();
+  if (!q) return [];
+  // Strip `%` and `_` so user-typed wildcards don't leak through the LIKE.
+  // No backslash-escape needed because the dangerous characters are dropped
+  // outright — safer than ESCAPE-clauses across SQLite versions.
+  const pattern = `%${q.replace(/[%_]/g, '').toUpperCase()}%`;
+  const params = [pattern];
+  let sql = 'SELECT c.* FROM companies c';
+  if (onlyWithFinancials) {
+    sql += ' JOIN financials_yearly f ON f.country = c.country AND f.national_id_canon = c.national_id_canon';
+  }
+  sql += ' WHERE UPPER(c.legal_name) LIKE ?';
+  if (country) {
+    sql += ' AND c.country = ?';
+    params.push(country);
+  }
+  if (onlyWithFinancials) sql += ' GROUP BY c.country, c.national_id_canon';
+  sql += ' ORDER BY length(c.legal_name) ASC LIMIT ?';
+  params.push(limit);
+  const rows = getDb().prepare(sql).all(...params);
+  return rows.map(rowToDTO);
+}
+
 function rowToDTO(row) {
   return {
     country: row.country,

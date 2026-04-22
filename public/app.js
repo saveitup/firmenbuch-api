@@ -264,6 +264,96 @@ function renderResults(groups) {
     if (!group.hits?.length && !group.error) continue;
     els.results.appendChild(renderGroup(group));
   }
+  // After the DOM is in place, kick off background Kennzahlen-loading for
+  // any hit that came back from the server without cached financials. Runs
+  // with bounded concurrency so 20 misses don't hammer INPI at once; the
+  // AbortController is recycled on every new search so stale requests stop.
+  enrichMissingFinancials(sorted);
+}
+
+let enrichAbort = null;
+const ENRICH_CONCURRENCY = 3;
+const ENRICH_TIMEOUT_MS  = 60000;
+
+function enrichMissingFinancials(groups) {
+  if (enrichAbort) enrichAbort.abort();
+  enrichAbort = new AbortController();
+  const signal = enrichAbort.signal;
+
+  // Only adapters with `hasFinancials` (per /api/countries) are worth fetching.
+  const FIN_COUNTRIES = new Set(
+    (countries || []).filter((c) => c.hasFinancials).map((c) => c.id),
+  );
+  const queue = [];
+  for (const group of groups) {
+    if (!FIN_COUNTRIES.has(group.country)) continue;
+    for (const hit of (group.hits || [])) {
+      if (hit.latestFinancials) continue;         // already fulfilled server-side
+      if (hit.status === 'dissolved') continue;   // very rarely has fresh bilanzen
+      queue.push({ country: hit.country, id: hit.nationalId });
+    }
+  }
+  if (!queue.length) return;
+
+  let cursor = 0;
+  const runOne = async () => {
+    while (cursor < queue.length && !signal.aborted) {
+      const item = queue[cursor++];
+      try { await fetchOneKpi(item, signal); } catch { /* swallow — don't kill other fetches */ }
+    }
+  };
+  Promise.allSettled(Array.from({ length: ENRICH_CONCURRENCY }, runOne));
+}
+
+async function fetchOneKpi(item, parentSignal) {
+  // Mark the hit li as loading so the user gets a visual hint.
+  const li = document.querySelector(
+    `.hit[data-country="${CSS.escape(item.country)}"][data-id="${CSS.escape(item.id)}"]`,
+  );
+  if (li) li.classList.add('kpi-loading');
+
+  const ctrl = new AbortController();
+  parentSignal.addEventListener('abort', () => ctrl.abort(), { once: true });
+  const timer = setTimeout(() => ctrl.abort(), ENRICH_TIMEOUT_MS);
+  let data;
+  try {
+    const res = await fetch(`/api/company/${item.country}/${item.id}`, { signal: ctrl.signal });
+    if (!res.ok) return;
+    data = await res.json();
+  } finally {
+    clearTimeout(timer);
+    if (li) li.classList.remove('kpi-loading');
+  }
+  const fins = data?.financials || [];
+  // Pick the most recent KPI row.
+  const latest = fins.length
+    ? [...fins].sort((a, b) => (b.stichtag || '').localeCompare(a.stichtag || ''))[0]
+    : null;
+  if (!li) return;
+  if (!latest) {
+    // Upstream register returned no bilanzen for this SIREN. Make that
+    // explicit so the user knows it's not a loading bug — small SMEs /
+    // subsidiaries routinely file under the confidentiality option.
+    if (!li.querySelector('.hit-kpi, .hit-no-fin')) {
+      const note = document.createElement('div');
+      note.className = 'hit-no-fin';
+      note.textContent = 'Keine Bilanz öffentlich hinterlegt';
+      li.appendChild(note);
+    }
+    return;
+  }
+  if (!li.querySelector('.hit-kpi')) {
+    li.appendChild(renderKpiStrip({
+      stichtag: latest.stichtag,
+      currency: latest.currency || 'EUR',
+      umsatzerloese: latest.umsatzerloese,
+      bilanzsumme: latest.bilanzsumme,
+      eigenkapital: latest.eigenkapital,
+      jahresergebnis: latest.jahresergebnis,
+      ek_quote: latest.ek_quote,
+    }));
+    li.classList.add('has-kpi');
+  }
 }
 
 function renderGroup(group) {
