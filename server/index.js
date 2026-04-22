@@ -46,7 +46,28 @@ app.get('/api/search', async (req, res) => {
   const cacheKey = `${countryFilter ? countryFilter.join(',') : '*'}::${q.toLowerCase()}`;
   try {
     const results = await searchCache.wrap(cacheKey, () => searchAll(q, countryFilter));
-    for (const group of results) for (const hit of group.hits) upsertCompany(hit);
+    for (const group of results) {
+      for (const hit of group.hits) {
+        upsertCompany(hit);
+        // Attach the most recent cached Kennzahlen (read-only, zero-cost
+        // DB lookup). Lets the frontend show Umsatz/Bilanz/EK-Quote inline
+        // in the hit list without triggering a full company fetch per row.
+        // Never-looked-up companies simply get no summary.
+        const rows = readFinancials(hit.country, hit.nationalIdCanon);
+        if (rows.length) {
+          const latest = rows[rows.length - 1];
+          hit.latestFinancials = {
+            stichtag: latest.stichtag,
+            currency: latest.currency || 'EUR',
+            umsatzerloese: latest.umsatzerloese,
+            bilanzsumme: latest.bilanzsumme,
+            eigenkapital: latest.eigenkapital,
+            jahresergebnis: latest.jahresergebnis,
+            ek_quote: latest.ek_quote,
+          };
+        }
+      }
+    }
     res.json({ query: q, countries: countryFilter, results });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });

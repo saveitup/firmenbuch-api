@@ -316,7 +316,44 @@ function renderHit(dto) {
   li.querySelector('.hit-name').textContent = dto.legalName || '(ohne Namen)';
   li.querySelector('.hit-status').textContent = dto.status === 'dissolved' ? 'gelöscht' : 'aktiv';
   li.querySelector('.hit-id').textContent = dto.nationalId;
+  if (dto.latestFinancials) {
+    li.appendChild(renderKpiStrip(dto.latestFinancials));
+    li.classList.add('has-kpi');
+  }
   return li;
+}
+
+// Compact one-line Kennzahlen summary rendered under the company name when
+// the search response carries cached financials for the hit. Stays silent
+// for companies the user has never looked up (fresh registers show no data).
+const EUR_COMPACT = new Intl.NumberFormat('de-AT', { notation: 'compact', compactDisplay: 'short', maximumFractionDigits: 1 });
+function fmtEur(v) {
+  if (v == null || !Number.isFinite(v)) return '—';
+  return EUR_COMPACT.format(v) + ' €';
+}
+function fmtPct(v) {
+  if (v == null || !Number.isFinite(v)) return '—';
+  return (v * 100).toFixed(1) + ' %';
+}
+function renderKpiStrip(kpi) {
+  const strip = document.createElement('div');
+  strip.className = 'hit-kpi';
+  const year = (kpi.stichtag || '').slice(0, 4) || '—';
+  strip.innerHTML = `
+    <span class="hit-kpi-year">FY ${year}</span>
+    <span class="hit-kpi-cell" title="Umsatzerlöse"><em>Umsatz</em> <b></b></span>
+    <span class="hit-kpi-cell" title="Bilanzsumme"><em>Bilanz</em> <b></b></span>
+    <span class="hit-kpi-cell" title="Eigenkapital"><em>EK</em> <b></b></span>
+    <span class="hit-kpi-cell" title="Jahresergebnis"><em>JE</em> <b></b></span>
+    <span class="hit-kpi-cell" title="Eigenkapitalquote"><em>EK-Quote</em> <b></b></span>
+  `;
+  const cells = strip.querySelectorAll('.hit-kpi-cell b');
+  cells[0].textContent = fmtEur(kpi.umsatzerloese);
+  cells[1].textContent = fmtEur(kpi.bilanzsumme);
+  cells[2].textContent = fmtEur(kpi.eigenkapital);
+  cells[3].textContent = fmtEur(kpi.jahresergebnis);
+  cells[4].textContent = fmtPct(kpi.ek_quote);
+  return strip;
 }
 
 function onResultsClick(ev) {
