@@ -1,39 +1,58 @@
 #!/usr/bin/env node
-// Batch pre-warm: discovers recent French bilan filings directly from
-// INPI RNE, collects unique SIRENs, and drives them through our normal
-// /api/company/FR/{SIREN} pipeline so each gets parsed + cached.
+// FR prewarm — Kennzahlen-ingestion via the INPI RNE HTTPS API.
 //
-// After a run, every discovered SIREN renders with KPIs instantly in
-// the search UI — both via the /api/search local-cache prepend and via
-// the zero-cost `latestFinancials` attach.
+// **Important scale note:** the public `/api/bilans` endpoint ignores the
+// `page`/`offset`/`pageSize` parameters and always returns the 20 most
+// recently deposited bilans (confirmed 2026-04). To ingest at scale you
+// need the SFTP bulk channel — see scripts/ingest-fr-sftp.mjs once you
+// have credentials.
+//
+// For API-based ingestion the best we can do is a *rolling* strategy:
+// run this script periodically (every 30–60 min via cron) and each run
+// picks up whatever new filings surfaced since the last one. Over a day
+// INPI publishes a few hundred to a few thousand bilans; the checkpoint
+// (logs/prewarm-fr.checkpoint.json) prevents re-processing.
+//
+// How it works:
+//   1. Log in to INPI (credentials from .env).
+//   2. Read the top-20 `/api/bilans` feed (requesting more is ignored).
+//   3. Skip SIRENs already warmed in a prior run via the checkpoint.
+//   4. Drive each SIREN through our own /api/company/FR/{siren} pipeline,
+//      which handles adapter + bilan download + layout-aware parse + OCR
+//      fallback + SQLite cache.
+//
+// Operational niceties:
+//   • Checkpoint file (logs/prewarm-fr.checkpoint.json) tracks every
+//     SIREN we've attempted, so re-running resumes. Use `--reset` to
+//     start fresh.
+//   • SIGINT (Ctrl-C) flushes the checkpoint before exiting.
+//   • Scales from a 10-entry smoke-test to "keep going for N hours"
+//     by tuning the two env vars at the top.
 //
 // Usage:
-//   1. Server läuft auf $KONTUR_BASE (default localhost:3456).
-//   2. .env hat INPI_USERNAME / INPI_PASSWORD (read via node --env-file).
-//   3. Run:
-//        node --env-file=.env scripts/prewarm-fr.mjs
-//      or (same effect via shorthand):
-//        npm run prewarm:fr
-//
-// Tuning via env vars:
-//   PREWARM_BILAN_PAGES     default 5   (100 bilans/page → ~500 filings scanned)
-//   PREWARM_MAX_COMPANIES   default 200 (hard cap on warm-calls per run)
-//   PREWARM_CONCURRENCY     default 3   (parallel warm-calls)
-//   PREWARM_TIMEOUT_MS      default 180000  (3 min per SIREN)
-//   PREWARM_SKIP_WARM       default 1   (1 = skip SIRENs already in DB)
-//
-// Idempotent: re-runs against the same window are cheap (cache hits).
+//   npm run prewarm:fr                      # one shot, harvests whatever
+//                                           # is in the current 20-item feed
+//   npm run prewarm:fr -- --reset           # wipe checkpoint (re-process
+//                                           # already-cached SIRENs)
+//   # recommended deployment: cron every 30 min
+//   # */30 * * * * cd $KONTUR_REPO && npm run prewarm:fr >> logs/cron.log 2>&1
 
 import https from 'node:https';
-import { existsSync, mkdirSync, appendFileSync } from 'node:fs';
+import {
+  existsSync, mkdirSync, appendFileSync, readFileSync, writeFileSync,
+} from 'node:fs';
 
 const BASE            = process.env.KONTUR_BASE || 'http://localhost:3456';
 const INPI_BASE       = 'https://registre-national-entreprises.inpi.fr';
-const BILAN_PAGES     = Number(process.env.PREWARM_BILAN_PAGES     || 5);
-const MAX_COMPANIES   = Number(process.env.PREWARM_MAX_COMPANIES   || 200);
+// BILAN_PAGES kept for legacy tuning but pagination is a no-op on INPI's
+// side; we always fetch only the first 20 items. MAX_COMPANIES caps the
+// per-run warm count (mostly relevant for the first run when the feed
+// contains nothing already in our cache).
+const BILAN_PAGES     = Number(process.env.PREWARM_BILAN_PAGES     || 1);
+const MAX_COMPANIES   = Number(process.env.PREWARM_MAX_COMPANIES   || 100);
 const CONCURRENCY     = Number(process.env.PREWARM_CONCURRENCY     || 3);
-const TIMEOUT_MS      = Number(process.env.PREWARM_TIMEOUT_MS      || 180000);
-const SKIP_WARM       = Number(process.env.PREWARM_SKIP_WARM       || 1);
+const TIMEOUT_MS      = Number(process.env.PREWARM_TIMEOUT_MS      || 240000);   // 4 min/SIREN
+const CHECKPOINT_EVERY_N = Number(process.env.PREWARM_CHECKPOINT_EVERY_N || 10);
 const INPI_USERNAME   = process.env.INPI_USERNAME;
 const INPI_PASSWORD   = process.env.INPI_PASSWORD;
 
@@ -42,13 +61,39 @@ if (!INPI_USERNAME || !INPI_PASSWORD) {
   process.exit(1);
 }
 
-if (!existsSync('logs')) mkdirSync('logs', { recursive: true });
+const LOG_DIR         = 'logs';
+const LOG_PATH        = `${LOG_DIR}/prewarm-fr.log`;
+const CHECKPOINT_PATH = `${LOG_DIR}/prewarm-fr.checkpoint.json`;
+if (!existsSync(LOG_DIR)) mkdirSync(LOG_DIR, { recursive: true });
+
+const RESET = process.argv.includes('--reset');
+const cli = process.argv.slice(2).filter((a) => !a.startsWith('--'));
+
 const log = (line) => {
   const ts = new Date().toISOString();
   const msg = `${ts}  ${line}`;
-  console.log(msg);
-  appendFileSync('logs/prewarm-fr.log', msg + '\n');
+  process.stdout.write(msg + '\n');
+  appendFileSync(LOG_PATH, msg + '\n');
 };
+
+// ─── Checkpoint ─────────────────────────────────────────────────────────
+// Persist a map { siren: { status, filled, tried_at } } so re-runs know
+// which SIRENs are done (any status) and can resume. Write-through on
+// every N successful completions plus a final flush on SIGINT/exit.
+let checkpoint = { seen: {} };
+if (existsSync(CHECKPOINT_PATH) && !RESET) {
+  try {
+    checkpoint = JSON.parse(readFileSync(CHECKPOINT_PATH, 'utf8'));
+    if (!checkpoint.seen) checkpoint.seen = {};
+  } catch { checkpoint = { seen: {} }; }
+}
+let dirty = 0;
+const flushCheckpoint = () => {
+  try { writeFileSync(CHECKPOINT_PATH, JSON.stringify(checkpoint)); dirty = 0; }
+  catch (err) { log(`checkpoint write failed: ${err.message}`); }
+};
+process.on('SIGINT',  () => { log('SIGINT — flushing checkpoint'); flushCheckpoint(); process.exit(130); });
+process.on('SIGTERM', () => { log('SIGTERM — flushing checkpoint'); flushCheckpoint(); process.exit(143); });
 
 // ─── INPI helpers ───────────────────────────────────────────────────────
 function inpiJson(path, method = 'GET', body = null, headers = {}) {
@@ -81,22 +126,19 @@ function inpiJson(path, method = 'GET', body = null, headers = {}) {
 
 async function inpiLogin() {
   const data = await inpiJson('/api/sso/login', 'POST', {
-    username: INPI_USERNAME,
-    password: INPI_PASSWORD,
+    username: INPI_USERNAME, password: INPI_PASSWORD,
   });
   if (!data?.token) throw new Error('INPI login returned no token');
   return data.token;
 }
 
 async function fetchRecentBilanPage(token, page) {
-  // /api/bilans without filter returns the global chronological feed of
-  // recent filings. Newest first, 100 per page by default.
   return inpiJson(`/api/bilans?page=${page}&pageSize=100`, 'GET', null, {
     Authorization: `Bearer ${token}`,
   });
 }
 
-// ─── Our server helpers ─────────────────────────────────────────────────
+// ─── Warm one SIREN ─────────────────────────────────────────────────────
 async function warmOne(siren, label) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
@@ -106,7 +148,7 @@ async function warmOne(siren, label) {
     const ms  = Date.now() - t0;
     if (!res.ok) {
       log(`  FAIL ${siren}  http=${res.status}  ${ms}ms  ${label || ''}`);
-      return { ok: false };
+      return { ok: false, status: `http_${res.status}` };
     }
     const data = await res.json();
     const fins = data?.financials || [];
@@ -116,38 +158,34 @@ async function warmOne(siren, label) {
           .filter((k) => latest[k] != null).length
       : 0;
     const name = data?.company?.legalName || label || '';
-    log(`   OK  ${siren}  ${String(fins.length).padStart(2)} rows  ${filled}/5 KPIs  ${ms.toString().padStart(5)}ms  ${name}`);
+    log(`   OK  ${siren}  ${String(fins.length).padStart(2)}r  ${filled}/5 KPIs  ${String(ms).padStart(6)}ms  ${name}`);
     return { ok: true, rows: fins.length, filled };
   } catch (err) {
     log(`  ERR  ${siren}  ${err.name}: ${err.message}  ${label || ''}`);
-    return { ok: false };
+    return { ok: false, status: err.name };
   } finally {
     clearTimeout(timer);
   }
 }
 
-async function listAlreadyWarm() {
-  // Ask our own server: it exposes countries but not raw DB. We call the
-  // /api/search endpoint with a wildcard? Not supported. Pragmatic: just
-  // accept that re-runs do work (cache hits are fast anyway). Skipping
-  // warm SIRENs is a nice-to-have, toggled via PREWARM_SKIP_WARM.
-  // Easiest skip signal: ask the company endpoint first with a HEAD-ish
-  // check? We don't expose that. So we just rely on downstream caches.
-  return new Set();
-}
-
 // ─── Main ───────────────────────────────────────────────────────────────
-log(`=== prewarm-fr  pages=${BILAN_PAGES}, concurrency=${CONCURRENCY}, cap=${MAX_COMPANIES} ===`);
+log(`=== prewarm-fr  pages=${BILAN_PAGES}, max=${MAX_COMPANIES}, conc=${CONCURRENCY}${RESET ? ' [--reset]' : ''} ===`);
 log('Logging in to INPI…');
 let token;
 try { token = await inpiLogin(); }
 catch (err) { log(`Login failed: ${err.message}`); process.exit(2); }
 log('Login OK. Scanning recent bilans…');
 
-const sirens = new Map(); // siren → most recent denomination from bilan metadata
+const sirens = new Map();   // siren → most recent denomination from bilan metadata
 for (let p = 1; p <= BILAN_PAGES; p++) {
-  const list = await fetchRecentBilanPage(token, p);
-  const arr = Array.isArray(list) ? list : [];
+  let arr = [];
+  try {
+    const list = await fetchRecentBilanPage(token, p);
+    arr = Array.isArray(list) ? list : [];
+  } catch (err) {
+    log(`  page ${p}: fetch failed (${err.message}), skipping`);
+    continue;
+  }
   let added = 0;
   for (const b of arr) {
     if (!b?.siren || !/^\d{9}$/.test(b.siren)) continue;
@@ -156,24 +194,47 @@ for (let p = 1; p <= BILAN_PAGES; p++) {
     added++;
   }
   log(`  page ${p}: +${added} new SIRENs (cumulative ${sirens.size})`);
-  if (arr.length < 100) break;  // no more pages
+  if (arr.length < 100) break;
 }
 
-const warm = SKIP_WARM ? await listAlreadyWarm() : new Set();
-const targets = [...sirens.entries()]
-  .filter(([s]) => !warm.has(s))
-  .slice(0, MAX_COMPANIES);
-log(`=== ${targets.length} SIRENs queued for pre-warming ===`);
+// Apply checkpoint filter. Any SIREN with a seen entry from a prior run
+// is skipped regardless of outcome — re-runs can reset with --reset.
+const eligible = [...sirens.entries()].filter(([s]) => !checkpoint.seen[s]);
+const ckSkipped = sirens.size - eligible.length;
+const targets = eligible.slice(0, MAX_COMPANIES);
+const capSkipped = eligible.length - targets.length;
+log(`=== ${targets.length} SIRENs queued  (checkpoint skipped ${ckSkipped}, over-cap ${capSkipped}) ===`);
+
+if (!targets.length) {
+  log('Nothing to do — all candidates already checkpointed.');
+  flushCheckpoint();
+  process.exit(0);
+}
 
 let cursor = 0;
-let okCount = 0, errCount = 0;
+let okCount = 0, errCount = 0, totalFilled = 0;
+const t_start = Date.now();
+
 await Promise.all(Array.from({ length: CONCURRENCY }, async () => {
   while (cursor < targets.length) {
     const i = cursor++;
     const [siren, name] = targets[i];
     const r = await warmOne(siren, name);
-    if (r.ok) okCount++; else errCount++;
-    if ((i + 1) % 25 === 0) log(`-- progress ${i + 1}/${targets.length} (ok=${okCount}, err=${errCount}) --`);
+    checkpoint.seen[siren] = {
+      status: r.ok ? 'ok' : (r.status || 'err'),
+      filled: r.filled ?? 0,
+      tried_at: new Date().toISOString().slice(0, 19),
+    };
+    if (r.ok) { okCount++; totalFilled += (r.filled || 0); } else { errCount++; }
+    if (++dirty >= CHECKPOINT_EVERY_N) flushCheckpoint();
+
+    if ((i + 1) % 25 === 0) {
+      const elapsed = ((Date.now() - t_start) / 1000).toFixed(0);
+      const rate = (okCount + errCount) / Math.max(1, Date.now() - t_start) * 1000;
+      log(`-- progress ${i + 1}/${targets.length}  ok=${okCount}  err=${errCount}  ⌀KPI=${(totalFilled / Math.max(1, okCount)).toFixed(2)}/5  ${elapsed}s  (${rate.toFixed(2)}/s) --`);
+    }
   }
 }));
-log(`=== done: ok=${okCount}, err=${errCount} / ${targets.length} ===`);
+flushCheckpoint();
+const avg = (totalFilled / Math.max(1, okCount)).toFixed(2);
+log(`=== done: ok=${okCount}, err=${errCount} / ${targets.length}  ⌀ KPIs=${avg}/5 ===`);

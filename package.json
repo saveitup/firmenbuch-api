@@ -10,7 +10,8 @@
     "dev": "node --watch server/index.js",
     "db:migrate": "node server/db/migrate.js",
     "eval:fr": "node scripts/fr-eval.mjs",
-    "prewarm:fr": "node --env-file=.env scripts/prewarm-fr.mjs"
+    "prewarm:fr": "node --env-file=.env scripts/prewarm-fr.mjs",
+    "ingest:fr-sftp": "node --env-file=.env.local scripts/ingest-fr-sftp.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
