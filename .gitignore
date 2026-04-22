@@ -1,0 +1,11 @@
+.env
+.env.local
+node_modules/
+cache/
+*.log
+.DS_Store
+data/kontur.db
+data/kontur.db-shm
+data/kontur.db-wal
+.claude/settings.local.json
+.claude/scheduled_tasks.lock

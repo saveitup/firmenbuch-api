@@ -1,0 +1,328 @@
+/* Kontur — component primitives.
+   Each class starts with `k-` to avoid collision with the legacy stylesheet. */
+
+/* ─────────── Card ─────────── */
+.k-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
+  position: relative;
+  overflow: hidden;
+}
+.k-card--raised {
+  box-shadow: var(--shadow-2);
+}
+.k-card--glass {
+  background: var(--surface-overlay);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  border-color: color-mix(in oklab, var(--line) 60%, transparent);
+}
+.k-card--hover {
+  transition: box-shadow var(--dur-2) var(--ease), border-color var(--dur-2) var(--ease), transform var(--dur-2) var(--ease);
+}
+.k-card--hover:hover {
+  box-shadow: var(--shadow-3);
+  border-color: color-mix(in oklab, var(--accent) 40%, var(--line));
+  transform: translateY(-1px);
+}
+.k-card--pad { padding: var(--space-5); }
+.k-card--pad-lg { padding: var(--space-6); }
+
+/* Gradient header strip above certain cards */
+.k-card--topline::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 3px;
+  background: var(--grad-brand);
+  opacity: 0.9;
+}
+
+/* ─────────── Button ─────────── */
+.k-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 10px 16px; border-radius: var(--radius);
+  font: 500 var(--text-base)/1 var(--font-sans);
+  transition: background var(--dur-1) var(--ease), transform var(--dur-1) var(--ease), box-shadow var(--dur-2) var(--ease), border-color var(--dur-1) var(--ease);
+  white-space: nowrap; user-select: none;
+}
+.k-btn:active { transform: translateY(1px); }
+.k-btn[disabled] { opacity: 0.55; pointer-events: none; }
+
+.k-btn--primary {
+  background: var(--grad-brand);
+  color: #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.12), 0 8px 24px -8px color-mix(in oklab, var(--accent) 60%, transparent);
+}
+.k-btn--primary:hover { filter: brightness(1.08); }
+
+.k-btn--ghost {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--line);
+}
+.k-btn--ghost:hover { border-color: var(--accent); color: var(--accent); }
+
+.k-btn--soft {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid transparent;
+}
+.k-btn--soft:hover { background: color-mix(in oklab, var(--accent) 18%, transparent); }
+
+.k-btn--sm { padding: 6px 12px; font-size: var(--text-sm); border-radius: var(--radius-sm); }
+.k-btn--icon { padding: 8px; width: 36px; height: 36px; }
+
+/* ─────────── Input ─────────── */
+.k-input, .k-select {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--fg);
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  font: 400 var(--text-base)/1.3 var(--font-sans);
+  transition: border-color var(--dur-1) var(--ease), box-shadow var(--dur-1) var(--ease), background var(--dur-1) var(--ease);
+  width: 100%;
+}
+.k-input:focus, .k-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+  background: var(--surface);
+}
+.k-input::placeholder { color: var(--muted-2); }
+.k-input--lg { padding: 14px 18px; font-size: var(--text-lg); border-radius: var(--radius-md); }
+
+/* ─────────── Badge ─────────── */
+.k-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 8px; border-radius: var(--radius-pill);
+  font: 500 var(--text-xs)/1 var(--font-sans);
+  letter-spacing: 0.02em;
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  color: var(--fg-soft);
+}
+.k-badge--soft { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+.k-badge--good { background: var(--accent-2-soft); border-color: transparent; color: var(--accent-2); }
+.k-badge--warn { background: var(--warn-soft); border-color: transparent; color: var(--warn); }
+.k-badge--bad  { background: var(--bad-soft);  border-color: transparent; color: var(--bad);  }
+.k-badge--mono { font-family: var(--font-mono); letter-spacing: 0; }
+.k-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.8; }
+
+/* ─────────── KPI Tile ─────────── */
+.k-kpi {
+  display: grid; gap: 4px;
+  padding: var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  position: relative;
+  overflow: hidden;
+  min-width: 0;
+  isolation: isolate;
+}
+.k-kpi::before {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  background: var(--grad-card);
+  opacity: 0.6;
+  pointer-events: none;
+}
+.k-kpi__label {
+  font: 500 var(--text-xs)/1 var(--font-sans);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.k-kpi__value {
+  font: 600 var(--text-2xl)/1.1 var(--font-display);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+  letter-spacing: -0.02em;
+}
+.k-kpi__delta {
+  display: inline-flex; align-items: center; gap: 4px;
+  font: 500 var(--text-sm)/1 var(--font-sans);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.k-kpi__delta.is-up { color: var(--good); }
+.k-kpi__delta.is-down { color: var(--bad); }
+.k-kpi__spark { height: 28px; width: 100%; margin-top: 6px; }
+
+/* ─────────── DataTable ─────────── */
+.k-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--text-base); }
+.k-table thead th {
+  font: 600 var(--text-xs)/1 var(--font-sans);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted);
+  text-align: left;
+  padding: 10px 14px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 1;
+}
+.k-table tbody td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+  color: var(--fg);
+}
+.k-table tbody tr { transition: background var(--dur-1) var(--ease); }
+.k-table tbody tr:hover { background: color-mix(in oklab, var(--accent) 4%, transparent); }
+.k-table td.num, .k-table th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.k-table td.muted { color: var(--muted); }
+.k-table .k-table__wrap, .k-table-wrap { width: 100%; overflow-x: auto; }
+
+/* ─────────── Tabs ─────────── */
+.k-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.k-tab {
+  padding: 10px 16px;
+  color: var(--muted);
+  font: 500 var(--text-base)/1 var(--font-sans);
+  border-bottom: 2px solid transparent;
+  transition: color var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease);
+  white-space: nowrap;
+}
+.k-tab:hover { color: var(--fg); }
+.k-tab.is-active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+
+/* ─────────── Skeleton ─────────── */
+.k-skel {
+  background: linear-gradient(90deg,
+    var(--line) 0%,
+    color-mix(in oklab, var(--line) 50%, var(--bg-2)) 50%,
+    var(--line) 100%);
+  background-size: 200% 100%;
+  animation: k-shimmer 1.4s linear infinite;
+  border-radius: var(--radius-sm);
+}
+@keyframes k-shimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+.k-skel--line { height: 12px; width: 80%; }
+.k-skel--title { height: 22px; width: 40%; }
+.k-skel--block { height: 120px; width: 100%; border-radius: var(--radius); }
+
+/* ─────────── Toast ─────────── */
+.k-toast-region {
+  position: fixed; right: 16px; bottom: 16px;
+  display: flex; flex-direction: column; gap: 8px;
+  z-index: 120; pointer-events: none;
+}
+.k-toast {
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-3);
+  font-size: var(--text-base);
+  color: var(--fg);
+  pointer-events: auto;
+  min-width: 220px; max-width: 360px;
+  animation: k-toast-in var(--dur-3) var(--ease-out);
+}
+.k-toast--good { border-left-color: var(--accent-2); }
+.k-toast--bad  { border-left-color: var(--bad); }
+@keyframes k-toast-in {
+  from { opacity: 0; transform: translateX(20px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* ─────────── Chip ─────────── */
+.k-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px; border-radius: var(--radius-pill);
+  font: 500 var(--text-sm)/1.3 var(--font-sans);
+  background: var(--bg-2); color: var(--fg-soft);
+  border: 1px solid var(--line);
+  transition: all var(--dur-1) var(--ease);
+}
+.k-chip--mono { font-family: var(--font-mono); font-size: 12px; }
+.k-chip--accent { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+
+/* ─────────── Score Pill ─────────── */
+.k-score {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 8px 14px 8px 10px; border-radius: var(--radius-pill);
+  font: 600 var(--text-base)/1 var(--font-sans);
+  color: #fff;
+  background: var(--grad-brand);
+  box-shadow: 0 4px 16px -4px color-mix(in oklab, var(--accent) 60%, transparent);
+}
+.k-score__grade {
+  background: rgba(255,255,255,0.22);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-family: var(--font-display);
+  font-size: 14px;
+  letter-spacing: 0.04em;
+}
+
+/* ─────────── Hero KPI ─────────── */
+.k-hero-kpi {
+  display: grid; gap: 8px;
+  padding: var(--space-6);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.k-hero-kpi::after {
+  content: ""; position: absolute; inset: -30% -20% auto auto; width: 260px; height: 260px;
+  background: var(--grad-brand-soft); filter: blur(60px); z-index: -1; opacity: 0.8;
+  pointer-events: none;
+}
+.k-hero-kpi__label {
+  font: 500 var(--text-sm)/1 var(--font-sans);
+  color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em;
+}
+.k-hero-kpi__value {
+  font: 600 var(--text-4xl)/1 var(--font-display);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  color: var(--fg);
+}
+.k-hero-kpi__sub {
+  font: 400 var(--text-sm)/1.4 var(--font-sans);
+  color: var(--muted);
+}
+
+/* ─────────── Divider ─────────── */
+.k-divider { height: 1px; background: var(--line); margin: var(--space-5) 0; }
+
+/* ─────────── Ticker ─────────── */
+.k-ticker {
+  overflow: hidden; position: relative;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--surface); padding: 10px 0;
+  mask-image: linear-gradient(90deg, transparent 0, #000 6%, #000 94%, transparent 100%);
+}
+.k-ticker__track {
+  display: flex; gap: 40px; white-space: nowrap;
+  animation: k-scroll 45s linear infinite;
+}
+.k-ticker__item {
+  display: inline-flex; align-items: center; gap: 8px;
+  font: 500 var(--text-sm)/1 var(--font-sans); color: var(--fg-soft);
+}
+.k-ticker__item .k-chip { margin-right: 4px; }
+@keyframes k-scroll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+/* ─────────── Empty state ─────────── */
+.k-empty {
+  padding: var(--space-10) var(--space-6); text-align: center;
+  color: var(--muted); border: 1px dashed var(--line); border-radius: var(--radius);
+  font: 400 var(--text-base)/1.5 var(--font-sans);
+}

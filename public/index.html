@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Kontur — Europäische Firmendatenbank</title>
+  <link rel="stylesheet" href="/design/reset.css" />
+  <link rel="stylesheet" href="/design/tokens.css" />
+  <link rel="stylesheet" href="/design/components.css" />
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <div class="grain-overlay" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <a class="brand" href="/">
+      <span class="brand-mark"></span>
+      <div class="brand-text">
+        <span class="logo">Kontur</span>
+        <span class="tag">Europäische Firmendatenbank</span>
+      </div>
+    </a>
+  </header>
+
+  <main class="app">
+    <section class="hero">
+      <div class="hero-shell">
+        <h1 class="hero-title">Finde jedes europäische Unternehmen.</h1>
+        <p class="hero-subtitle">
+          Ein Interface für <span class="hero-count" id="hero-count">14</span> nationale
+          Register — live, offene Daten, kommerziell nutzbar.
+        </p>
+        <form id="search-form" class="search-shell">
+          <div class="search-row">
+            <div class="country-select-wrap">
+              <select id="country-select" class="country-select">
+                <option value="">Alle Länder</option>
+              </select>
+            </div>
+            <input
+              id="search-input"
+              class="search-input"
+              type="search"
+              placeholder="Firmenname, Registernummer oder LEI…"
+              autocomplete="off"
+              autofocus
+            />
+            <kbd class="kbd-hint" title="Tastenkürzel zur Fokussierung">⌘ K</kbd>
+            <button id="search-button" class="search-button" type="submit">
+              <span>Suchen</span>
+            </button>
+          </div>
+          <p id="search-status" class="search-status" aria-live="polite"></p>
+        </form>
+        <nav id="country-strip" class="country-strip" aria-label="Länder-Abdeckung"></nav>
+      </div>
+    </section>
+
+    <section id="empty-state" class="empty-state">
+      <p class="empty-title">Probier eine dieser Suchen:</p>
+      <div class="example-chips" id="example-chips"></div>
+    </section>
+
+    <section id="results" class="results"></section>
+    <section id="detail" class="detail-wrap" hidden></section>
+  </main>
+
+  <button id="scroll-top" class="scroll-top" type="button" aria-label="Zurück nach oben" hidden>↑</button>
+  <div id="toast" class="toast" hidden></div>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <p class="footer-disclaimer">
+        <strong>Kontur</strong> aggregiert öffentliche Register-Daten. Die Angaben sind
+        <strong>keine amtlichen Auszüge</strong> und werden ohne Gewähr bereitgestellt.
+      </p>
+      <div id="footer-sources" class="footer-sources"></div>
+    </div>
+  </footer>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

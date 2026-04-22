@@ -1,0 +1,23 @@
+{
+  "name": "kontur",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Europäische Firmendatenbank — Multi-Country-Lookup über freie Register-APIs.",
+  "main": "server/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "db:migrate": "node server/db/migrate.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "express": "^4.19.2",
+    "fast-xml-parser": "^4.4.1",
+    "pdf-parse": "^2.4.5",
+    "zod": "^3.25.76"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
