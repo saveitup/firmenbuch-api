@@ -17,7 +17,7 @@ in ein normalisiertes Company-DTO überführt und lokal gecacht.
 | **FR** — INPI RNE | ✅ Live — Firmen + Organe + Bilanz-KPIs (heuristisch aus PDF/OCR) |
 | **CZ, FI** — ARES / PRH | ✅ Live (ohne Finanzen) |
 | **DE, SE, PL, IT, ES, NL, BE, IE** | GLEIF-basierter Übergang (nur LEI-Firmen) |
-| **UK** — Companies House | ✅ Live — Firmen + Officers + Bilanz-KPIs (layout-aware PDF-Parser + OCR fallback) |
+| **UK** — Companies House | ✅ Live — Firmen + Officers + **strukturierte iXBRL-Bilanzen** (Bulk-Ingest) + PDF-Parser-Fallback |
 | DB-Schema `(country, national_id)` + financials_yearly | ✅ |
 | Health-Score + Kennzahlen | ✅ verdrahtet, sichtbar im Detail-View |
 | Frontend | Country-Dropdown, Such-View, Detail mit Organe/Kennzahlen/Score |
@@ -32,6 +32,21 @@ in ein normalisiertes Company-DTO überführt und lokal gecacht.
 Testsample: LVMH, L'Oréal, Danone, TotalEnergies, Renault, Carrefour, Sanofi,
 Michelin, Orange, BNP Paribas. Ausführung: `npm run eval:fr` (Server muss
 laufen).
+
+### UK-Bulk-Ingest (iXBRL)
+
+Companies House publiziert einen freien täglichen ZIP mit allen
+elektronisch eingereichten Accounts als iXBRL — strukturiert, keine
+OCR-Heuristik. Ein Ingest-Lauf über einen Tag:
+
+```bash
+npm run ingest:uk-bulk                  # gestrigen Tag holen
+npm run ingest:uk-bulk -- --date=2026-04-22
+```
+
+Typische Werte: ~10 000 iXBRL-Dateien/Tag, ~1 500 Filings/s Parsing,
+ingest eines kompletten Tages in ~15 Sekunden. Cronbar; Checkpoint in
+`logs/ingest-uk-bulk.checkpoint.json` verhindert Doppelungen.
 
 ## Architektur
 

@@ -8,6 +8,7 @@ data/kontur.db
 data/kontur.db-shm
 data/kontur.db-wal
 data/staging-sftp/
+data/staging-uk-bulk/
 logs/
 .claude/settings.local.json
 .claude/scheduled_tasks.lock

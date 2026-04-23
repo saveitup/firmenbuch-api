@@ -68,6 +68,26 @@ Launch-Konfig in `.claude/launch.json` (`name: "kontur"`) — startet via
 4. `configured` getter zurückgeben `true`, wenn der Adapter ohne weitere
    Konfiguration nutzbar ist (sonst mit API-Key/Login in `.env`)
 
+## UK-Bulk-iXBRL-Ingest
+
+**Die strukturierte Haupt-Quelle für UK-Finanzen** — nicht der heuristische
+PDF-Parser. Companies House publiziert tägliche ZIPs mit allen elektronisch
+eingereichten Accounts als iXBRL, frei und ohne Auth. Diese Route deckt
+ca. 65 % aller UK-Filings ab (der Rest sind Paper-/Scan-Einreichungen, für
+die der PDF-Parser bleibt).
+
+- Quelle: `https://download.companieshouse.gov.uk/Accounts_Bulk_Data-YYYY-MM-DD.zip`
+- Dateien: `Prod223_NNNN_CCCCCCCC_YYYYMMDD.html` (iXBRL) oder `.xml` (XBRL)
+- Parser: [server/uk-ixbrl-parser.js](server/uk-ixbrl-parser.js) — extrahiert
+  `<ix:nonFraction>` Tags und mappt FRC-core-Namen (Turnover, ProfitLoss,
+  Equity, NetAssetsLiabilities, FixedAssets + CurrentAssets → Bilanzsumme)
+- Ingest: `npm run ingest:uk-bulk` — downloadet, entpackt, parst parallel,
+  upserted in `financials_yearly` via `upsertFinancials` direkt (kein HTTP
+  hop, Server muss nicht laufen)
+- Durchsatz: ~1 500 Filings/s, ein Tag in ~15 s
+- Tag-Mapping liegt in `TAG_TO_KPI` im Parser; neue FRC-Taxonomie-
+  Revisionen brauchen meist nur neue Einträge dort
+
 ## UK-Adapter-Spezifika (Companies House)
 
 - Auth: HTTP Basic mit API-Key als Username, leeres Passwort. Key kommt
