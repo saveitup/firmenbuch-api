@@ -68,6 +68,33 @@ Launch-Konfig in `.claude/launch.json` (`name: "kontur"`) — startet via
 4. `configured` getter zurückgeben `true`, wenn der Adapter ohne weitere
    Konfiguration nutzbar ist (sonst mit API-Key/Login in `.env`)
 
+## UK-Adapter-Spezifika (Companies House)
+
+- Auth: HTTP Basic mit API-Key als Username, leeres Passwort. Key kommt
+  aus `UK_CH_API_KEY` in `.env`. Anmelden unter
+  https://developer.company-information.service.gov.uk/ → „Create an
+  application" (Live) → „Create new key" (REST).
+- Stammdaten: `/company/{number}` + `/company/{number}/officers`.
+- Bilanzen: `/company/{number}/filing-history?category=accounts` listet
+  accounts; jedes Filing hat `links.document_metadata` → Metadata-JSON am
+  `document-api.company-information.service.gov.uk`. Content via
+  `/document/{id}/content` (302-Redirect auf S3 — Authorization-Header
+  darf NICHT weitergereicht werden, siehe `httpBinary` in uk.js).
+- Parser ([uk-bilanz-parser.js](server/uk-bilanz-parser.js)): gleiche
+  Architektur wie FR (Layout → Plain text → OCR `eng`), aber:
+  - Zahlen: Komma als Tausender, Punkt als Dezimal (entgegensetzt zu FR)
+  - Einheiten: `£m`, `£'000`, `£000`, „(in £ millions)" etc.
+  - Labels zweistufig UK GAAP ↔ IFRS (Revenue/Turnover,
+    Profit for the year / Net profit, Total equity / Net assets, …)
+  - Banks: PBT statt Operating Profit (weil Banken kein Operating-Profit-
+    Konzept haben)
+- OCR-Pipeline liest bis Seite 140 (`ocrPdfUk`), mit
+  `markerThreshold=3` — glossy Jahresberichte nennen „Balance Sheet" im
+  Inhaltsverzeichnis vor den eigentlichen Tabellen.
+- Reverse-Iteration beim Text-Parsing: Zeilen werden von unten nach oben
+  gescannt, damit Tabellenzeilen Prosa-Erwähnungen („Revenue increased to
+  £3,312 million") übertrumpfen.
+
 ## FR-Adapter-Spezifika (INPI RNE)
 
 - Auth: `POST /api/sso/login` → JWT, ~1 h Gültigkeit, per 45-min TTL im Modul

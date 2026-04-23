@@ -114,6 +114,7 @@ const PATTERNS = {
     // on one line — Net assets is often the mirror (assets - liabilities).
     /^\s*net\s+assets\s*(?:\(note[^)]*\))?\s*$/i,
     /^\s*total\s+equity\s+and\s+liabilities\b/i,
+    /^\s*total\s+liabilities\s+and\s+equity\b/i,
   ],
   eigenkapital: [
     /^\s*total\s+equity\s*(?:\(note[^)]*\))?\s*$/i,
@@ -123,28 +124,39 @@ const PATTERNS = {
     /^\s*capital\s+and\s+reserves\s*(?:attributable\s+to\s+.*)?$/i,
   ],
   jahresergebnis: [
-    /^\s*profit\s+(?:or\s+loss\s+)?for\s+the\s+(?:financial\s+)?(?:year|period)\s*(?:\(note[^)]*\))?\s*$/i,
+    /^\s*(?:net\s+)?profit\s+(?:or\s+loss\s+)?for\s+the\s+(?:financial\s+)?(?:year|period)\s*(?:\(note[^)]*\))?\s*$/i,
+    /^\s*(?:net\s+)?profit\s+for\s+the\s+(?:financial\s+)?(?:year|period)\b/i,
     /^\s*profit\s+after\s+taxation\b/i,
     /^\s*profit\s+after\s+tax\b/i,
     /^\s*(?:net\s+)?profit\s+attributable\s+to\s+(?:owners|shareholders|equity\s+holders)\b/i,
-    /^\s*(?:loss|profit)\s+for\s+the\s+(?:financial\s+)?(?:year|period)\b/i,
+    /^\s*(?:net\s+)?(?:loss|profit)\s+for\s+the\s+(?:financial\s+)?(?:year|period)\b/i,
+    // Tier 2: total comprehensive income is the IFRS superset of net
+    // profit (adds OCI items like FX). Close enough for our Kennzahlen
+    // when no cleaner label appears.
+    /^\s*total\s+comprehensive\s+income\s+for\s+the\s+(?:year|period)\b/i,
   ],
   betriebsergebnis: [
     /^\s*operating\s+profit\s*(?:\(note[^)]*\))?\s*$/i,
     /^\s*profit\s+from\s+operations\b/i,
     /^\s*operating\s+(?:profit|loss)\s*\(?(?:loss|profit)?\)?\s*$/i,
+    // Banks and financial institutions don't use "operating profit" —
+    // their equivalent is "profit before tax" (which excludes tax but
+    // includes interest on their deposit base).
+    /^\s*profit\s+before\s+(?:tax|taxation)\b/i,
     /\boperating\s+profit\b/i,
   ],
 };
 
-// Line-based (plain-text / OCR) variants — relaxed anchors because label
-// can sit mid-line in prose.
+// Line-based (plain-text / OCR) variants. Keep the `^\s*` start anchor so
+// prose fragments like "inappropriate journal postings impacting revenue"
+// don't match — only lines where the label is the first word (e.g. a
+// financial-statement table row) count. Drop only the trailing `$` cell
+// anchor since KPI values follow the label on the same line.
 const LINE_PATTERNS = Object.fromEntries(
   Object.entries(PATTERNS).map(([kind, pats]) => [
     kind,
     pats.map((re) => {
       let src = re.source;
-      src = src.replace(/^\^\\s\*/, '\\b');
       src = src.replace(/\\s\*(?:\(\?:\\\(note\[\^\)\]\*\\\)\))?\\s\*\$$/g, '\\b');
       src = src.replace(/\\s\*\$$/, '\\b');
       return new RegExp(src, re.flags);
@@ -169,13 +181,27 @@ function asYearHeader(cells) {
 }
 
 function pickColumnValue(cells, targetX, { minValue = null } = {}) {
-  const candidates = [];
+  // Gather numeric candidates. The FIRST cell after the label is often a
+  // note-reference (small integer, 1..99) in UK filings — e.g. "Revenue 2
+  // 1,234". We strip that when the next candidate is an order of
+  // magnitude larger. This mirrors the text-path note-ref handling.
+  let candidates = [];
   for (let i = 1; i < cells.length; i++) {
     const n = parseUkNumber(cells[i].str);
     if (n == null) continue;
-    if (minValue != null && n < minValue) continue;
     candidates.push({ n, x: cells[i].x + (cells[i].width || 0) / 2 });
   }
+  if (candidates.length >= 2
+      && Math.abs(candidates[0].n) < 100
+      && Math.abs(candidates[1].n) > Math.abs(candidates[0].n) * 10) {
+    candidates = candidates.slice(1);
+  }
+  // Drop year-like integers (2015..2035) — appear as column headers or
+  // period-index cells, never actual KPI values.
+  candidates = candidates.filter(
+    (c) => !(Number.isInteger(c.n) && Math.abs(c.n) >= 2015 && Math.abs(c.n) <= 2035),
+  );
+  if (minValue != null) candidates = candidates.filter((c) => c.n >= minValue);
   if (!candidates.length) return null;
   if (targetX == null) return candidates[candidates.length - 1].n;
   let best = null, bestDist = Infinity;
@@ -330,7 +356,13 @@ const TEXT_MIN_RAW = {
 
 function extractKpi(text, kind, unit = 1) {
   const patterns = LINE_PATTERNS[kind] || [];
-  const lines = text.split('\n');
+  // Reverse iteration. UK annual reports narrate the KPI in the Chair's
+  // letter / highlights on early pages ("Revenue increased to £3,312
+  // million") before the actual Statement of Comprehensive Income on
+  // pages 100+. Scanning from the bottom up hits the table first, which
+  // carries raw numbers (3,312,191) that combine with the £000 unit
+  // header to yield the correct billion-scale value.
+  const lines = text.split('\n').reverse();
   const isPlausible = (n) => isPlausibleMagnitude(n * unit);
   const minRaw = TEXT_MIN_RAW[kind] ?? 0;
   for (const pattern of patterns) {

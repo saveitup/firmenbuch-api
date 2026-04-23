@@ -17,7 +17,7 @@ in ein normalisiertes Company-DTO überführt und lokal gecacht.
 | **FR** — INPI RNE | ✅ Live — Firmen + Organe + Bilanz-KPIs (heuristisch aus PDF/OCR) |
 | **CZ, FI** — ARES / PRH | ✅ Live (ohne Finanzen) |
 | **DE, SE, PL, IT, ES, NL, BE, IE** | GLEIF-basierter Übergang (nur LEI-Firmen) |
-| **UK** — Companies House | Adapter bereit, braucht API-Key in `.env` |
+| **UK** — Companies House | ✅ Live — Firmen + Officers + Bilanz-KPIs (layout-aware PDF-Parser + OCR fallback) |
 | DB-Schema `(country, national_id)` + financials_yearly | ✅ |
 | Health-Score + Kennzahlen | ✅ verdrahtet, sichtbar im Detail-View |
 | Frontend | Country-Dropdown, Such-View, Detail mit Organe/Kennzahlen/Score |

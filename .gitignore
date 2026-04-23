@@ -7,5 +7,7 @@ cache/
 data/kontur.db
 data/kontur.db-shm
 data/kontur.db-wal
+data/staging-sftp/
+logs/
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
