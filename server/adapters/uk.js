@@ -216,6 +216,27 @@ export default {
     }
     return out.sort((a, b) => (a.stichtag || '').localeCompare(b.stichtag || ''));
   },
+
+  async getDocuments(id) {
+    const key = canonId(id).toUpperCase();
+    if (!COMPANY_NUMBER.test(key)) return [];
+    return listDocumentsForCompany(key);
+  },
+
+  async downloadDocument(key) {
+    if (!key) return null;
+    const m = String(key).match(/^filing:([A-Za-z0-9_\-]+)$/);
+    if (!m) return null;
+    const docId = m[1];
+    const contentUrl = `https://${DOC_HOST}/document/${encodeURIComponent(docId)}/content`;
+    const { status, buf, contentType } = await httpBinary(contentUrl, { timeout: 120000 });
+    if (status !== 200 || !buf?.length) return null;
+    return {
+      bytes: buf,
+      contentType: contentType || 'application/pdf',
+      filename: `CompaniesHouse-${docId}.pdf`,
+    };
+  },
 };
 
 // Null out implausible fields rather than rejecting the whole row.
@@ -235,6 +256,34 @@ function sanitiseKpi(kpi) {
   const filled = ['umsatzerloese', 'bilanzsumme', 'eigenkapital', 'jahresergebnis', 'betriebsergebnis']
     .filter((f) => kpi[f] != null).length;
   return filled >= 1 ? kpi : null;
+}
+
+// ─── Document listing + proxy download ─────────────────────────────────
+// Exposes all account filings as downloadable PDFs. The UI offers these
+// as a fallback when Kennzahlen-Parsing takes too long or yields nothing
+// (scanned/glossy annual reports where OCR is inherently noisy).
+async function listDocumentsForCompany(companyNumber) {
+  try {
+    const { data } = await httpJson(
+      `/company/${encodeURIComponent(companyNumber)}/filing-history?category=accounts&items_per_page=30`,
+    );
+    const items = data?.items || [];
+    return items
+      .filter((f) => f?.links?.document_metadata)
+      .map((f) => {
+        const docId = String(f.links.document_metadata).split('/').pop();
+        return {
+          stichtag: f.action_date || f.made_up_date || f.date || null,
+          pdfKey: `filing:${docId}`,
+          title: f.description
+            ? f.description.replace(/^accounts-with-accounts-type-/, 'accounts · ')
+            : 'Accounts',
+          source_ref: docId,
+          filedAt: f.date,
+        };
+      })
+      .sort((a, b) => (b.stichtag || '').localeCompare(a.stichtag || ''));
+  } catch { return []; }
 }
 
 async function parseBilanCached(f) {

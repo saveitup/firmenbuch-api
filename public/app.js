@@ -683,11 +683,19 @@ function renderDetail(c, people, financials, score, documents) {
     : null;
   if (latestBalance) renderBilanz(els.detail.querySelector('.detail-bilanz'), latestBalance);
 
+  // `hasAnyFinancials` is broader than `latestBalance`: it's true whenever
+  // at least one year of parsed Kennzahlen (scalar or tree) is available,
+  // which drives the friendly-vs-apologetic tone of the documents note.
+  const hasAnyFinancials = Array.isArray(financials) && financials.some(
+    (r) => r.umsatzerloese != null || r.bilanzsumme != null
+        || r.eigenkapital != null || r.jahresergebnis != null
+        || r.betriebsergebnis != null || r.balanceSheet,
+  );
   // Original documents fallback — shown whenever the adapter enumerated filings.
   // Particularly useful for AT companies that file only PDF Jahresabschlüsse
   // (many large corporations do this; our XML parser can't read them).
   if (Array.isArray(documents) && documents.length) {
-    renderDocuments(els.detail.querySelector('.detail-documents'), c, documents, !!latestBalance);
+    renderDocuments(els.detail.querySelector('.detail-documents'), c, documents, hasAnyFinancials);
   }
 
   if (Array.isArray(people) && people.length) {
@@ -908,12 +916,16 @@ function renderDocuments(wrap, company, documents, hasParsedBalance) {
   listEl.innerHTML = '';
 
   const onlyPdf = documents.every((d) => !d.xmlKey && d.pdfKey);
-  if (onlyPdf && !hasParsedBalance) {
-    noteEl.textContent = 'Für diese Firma liegen Jahresabschlüsse nur als PDF vor — maschinelle Bilanzanalyse ist nicht möglich. Unten die Originalauszüge zum Download.';
+  if (!hasParsedBalance && onlyPdf) {
+    noteEl.textContent =
+      'Kennzahlen konnten aus diesen Einreichungen nicht zuverlässig extrahiert werden. '
+      + 'Originalauszüge zum Download unten — in der Regel PDF-Jahresabschlüsse beim Register.';
   } else if (!hasParsedBalance) {
-    noteEl.textContent = 'Originalauszüge der beim Firmenbuch eingereichten Jahresabschlüsse.';
+    noteEl.textContent = 'Originalauszüge der beim Register eingereichten Jahresabschlüsse.';
   } else {
-    noteEl.textContent = 'Zugehörige Originalauszüge (XML maschinenlesbar, PDF zum Lesen).';
+    noteEl.textContent = 'Zugehörige Originalauszüge — ' + (onlyPdf
+      ? 'PDF zum Lesen.'
+      : 'XML maschinenlesbar, PDF zum Lesen.');
   }
 
   const countryPath = encodeURIComponent(company.country);
@@ -929,6 +941,12 @@ function renderDocuments(wrap, company, documents, hasParsedBalance) {
     // extracted from the filing KEY, which is roughly chronological).
     year.textContent = d.stichtag ? String(d.stichtag).slice(0, 10) : '—';
     li.appendChild(year);
+    if (d.title) {
+      const title = document.createElement('span');
+      title.className = 'document-title';
+      title.textContent = d.title;
+      li.appendChild(title);
+    }
     const links = document.createElement('span');
     links.className = 'document-links';
     if (d.pdfKey) {

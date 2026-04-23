@@ -124,22 +124,38 @@ app.get('/api/company/:country/:id', async (req, res) => {
     // not on whether the primary stammdaten were fresh. So a cached company
     // still benefits from live officers/financials on each detail click.
     let people, financials, score, documents;
+    // Per-task timeout. `getFinancials` can run an OCR pipeline that legally
+    // takes minutes on a 250-page scanned annual report; capping it at 60 s
+    // means the user gets stammdaten + officers + the document list back
+    // promptly and can download the raw PDF if parsing was the bottleneck.
+    // Financials the adapter already cached in SQLite remain available and
+    // get rendered in `readFinancials` below regardless of this timeout.
+    const withTimeout = (p, ms, label) =>
+      Promise.race([p, new Promise((resolve) => setTimeout(() => resolve(Symbol.for(label + ':timeout')), ms))]);
     const tasks = [];
     if (typeof adapter.getPeople === 'function') {
-      tasks.push(adapter.getPeople(req.params.id).then((p) => { people = p; }).catch(() => {}));
+      tasks.push(
+        withTimeout(adapter.getPeople(req.params.id), 15000, 'people')
+          .then((p) => { if (!(typeof p === 'symbol')) people = p; })
+          .catch(() => {}),
+      );
     }
     if (typeof adapter.getFinancials === 'function') {
       tasks.push(
-        adapter.getFinancials(req.params.id).then((rows) => {
-          if (rows?.length) upsertFinancials(country, idCanon, rows);
-        }).catch(() => {}),
+        withTimeout(adapter.getFinancials(req.params.id), 60000, 'financials')
+          .then((rows) => { if (Array.isArray(rows) && rows.length) upsertFinancials(country, idCanon, rows); })
+          .catch(() => {}),
       );
     }
     if (typeof adapter.getDocuments === 'function') {
-      tasks.push(adapter.getDocuments(req.params.id).then((docs) => { documents = docs; }).catch(() => {}));
+      tasks.push(
+        withTimeout(adapter.getDocuments(req.params.id), 15000, 'documents')
+          .then((docs) => { if (!(typeof docs === 'symbol')) documents = docs; })
+          .catch(() => {}),
+      );
     }
     if (!/-gleif$/.test(company.source || '')) {
-      tasks.push(enrichWithGleif(company).catch(() => {}));
+      tasks.push(withTimeout(enrichWithGleif(company), 10000, 'gleif').catch(() => {}));
     }
     await Promise.all(tasks);
     // Always read the accumulated financials from DB — includes this call's

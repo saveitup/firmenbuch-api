@@ -929,7 +929,8 @@ main, header, footer { position: relative; z-index: 1; }
   border-radius: var(--radius-sm);
   background: var(--bg-2);
 }
-.document-year { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--fg-soft); }
+.document-year { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--fg-soft); min-width: 10ch; }
+.document-title { flex: 1; color: var(--muted-2); font-size: var(--text-sm); margin: 0 var(--space-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .document-links { display: flex; gap: var(--space-2); }
 .document-link {
   display: inline-block;

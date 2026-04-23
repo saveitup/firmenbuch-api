@@ -344,6 +344,46 @@ export default {
     // Oldest first to match the contract expected by the DB layer.
     return out.sort((a, b) => (a.stichtag || '').localeCompare(b.stichtag || ''));
   },
+
+  // List the raw bilan PDFs available at INPI for this SIREN. The UI
+  // renders these as download links next to the Kennzahlen, so users can
+  // inspect the original document even when heuristic parsing failed
+  // (scanned PDFs, exotic layouts, slow OCR). Shape matches the AT
+  // adapter's contract: `{ stichtag, pdfKey, title }`.
+  async getDocuments(id) {
+    const key = canonId(id);
+    if (!DIGITS_9.test(key)) return [];
+    try {
+      const { status, data } = await authedGet(`/api/bilans?siren[]=${key}`);
+      if (status === 404 || !Array.isArray(data)) return [];
+      return data
+        .filter((b) => b.siren === key && b.id && b.dateCloture)
+        .map((b) => ({
+          stichtag: String(b.dateCloture).slice(0, 10),
+          // We prefix the key so downloadDocument knows which INPI endpoint
+          // to hit. Simpler than adding a separate typed field.
+          pdfKey: `bilan:${b.id}`,
+          title: `Bilan ${b.typeBilan || '?'} ${String(b.dateCloture).slice(0, 4)}`,
+          source_ref: b.id,
+          typeBilan: b.typeBilan,
+        }))
+        .sort((a, b) => b.stichtag.localeCompare(a.stichtag));
+    } catch { return []; }
+  },
+
+  async downloadDocument(key) {
+    if (!key) return null;
+    const m = String(key).match(/^bilan:([a-f0-9]+)$/i);
+    if (!m) return null;
+    const bilanId = m[1];
+    const { status, buf, contentType } = await authedBinary(`/api/bilans/${bilanId}/download`);
+    if (status !== 200 || !buf?.length) return null;
+    return {
+      bytes: buf,
+      contentType: contentType || 'application/pdf',
+      filename: `INPI-bilan-${bilanId}.pdf`,
+    };
+  },
 };
 
 // Sanity check for heuristic parser output. The most common failure mode
