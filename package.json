@@ -12,7 +12,8 @@
     "eval:fr": "node scripts/fr-eval.mjs",
     "prewarm:fr": "node --env-file=.env scripts/prewarm-fr.mjs",
     "ingest:fr-sftp": "node --env-file=.env.local scripts/ingest-fr-sftp.mjs",
-    "ingest:uk-bulk": "node scripts/ingest-uk-bulk.mjs"
+    "ingest:uk-bulk": "node scripts/ingest-uk-bulk.mjs",
+    "eval:new": "node --env-file-if-exists=.env scripts/eval-new-adapters.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
