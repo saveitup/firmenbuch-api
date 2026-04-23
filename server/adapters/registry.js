@@ -17,8 +17,10 @@ import be from './be.js';
 import ie from './ie.js';
 import dk from './dk.js';
 import sk from './sk.js';
+import ee from './ee.js';
+import si from './si.js';
 
-const ADAPTERS = [at, de, no, fr, cz, fi, uk, se, pl, it, es, nl, be, ie, dk, sk];
+const ADAPTERS = [at, de, no, fr, cz, fi, uk, se, pl, it, es, nl, be, ie, dk, sk, ee, si];
 const BY_ID = new Map(ADAPTERS.map((a) => [a.id.toUpperCase(), a]));
 
 export function listCountries() {
