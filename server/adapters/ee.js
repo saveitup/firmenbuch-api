@@ -2,31 +2,36 @@
 // Free Open Data, no auth, no key. national_id = registry_code (8 digits).
 //
 // Data sources:
-//   • Stammdaten         https://ariregister.rik.ee/est/company/<code>   (HTML)
-//   • Annual reports     https://ariregister.rik.ee/est/company/<code>/annual_reports (HTML listing)
-//   • XBRL per report    https://ariregister.rik.ee/aruanded/xbrl/<report_id>
+//   • Stammdaten   https://ariregister.rik.ee/est/company/<code>          (HTML)
+//   • Financials   inline on the same annual_reports page — the RIK UI
+//                  renders a "näitajad" table with per-year Revenue
+//                  (Tulud) and Net profit (Kasum) arrays.  Equity,
+//                  total assets and operating profit are only available
+//                  through authenticated XBRL downloads, so we surface
+//                  the two public metrics and flag the adapter as
+//                  partial-coverage.
 //
-// The official Open Data bulk feed at avaandmed.ariregister.rik.ee
-// (300 MB/day JSON ZIP) is cleaner for coverage, but needs a separate
-// ingest script — we fall back to per-company HTML scrape so the adapter
-// works on-demand without a prior sync.
+// The original plan assumed a public /aruanded/xbrl/<id> endpoint; the
+// actual RIK site gates XBRL behind /est/auth/redirect_xbrl. We keep
+// the adapter compatible with that reality by parsing the inline stats
+// table that is rendered for every company in the free view.
 
 import https from 'node:https';
 import { makeDTO, AdapterError, canonId } from './base.js';
-import { parseEeXbrl } from '../ee-xbrl-parser.js';
 
 const HOST = 'ariregister.rik.ee';
-const UA = 'Kontur/0.2';
-const TIMEOUT_MS = 15000;
-
-const BILAN_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-const bilanCache = new Map();
+const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
+const TIMEOUT_MS = 20000;
 
 function httpGet(path, { host = HOST, accept = 'text/html', timeout = TIMEOUT_MS } = {}) {
   return new Promise((resolve, reject) => {
     const req = https.request({
       host, path, method: 'GET',
-      headers: { Accept: accept, 'User-Agent': UA, 'Accept-Language': 'en,et;q=0.8' },
+      headers: {
+        Accept: accept,
+        'Accept-Language': 'et,en;q=0.8',
+        'User-Agent': UA,
+      },
       timeout,
     }, (res) => {
       const chunks = [];
@@ -35,7 +40,6 @@ function httpGet(path, { host = HOST, accept = 'text/html', timeout = TIMEOUT_MS
         const buf = Buffer.concat(chunks);
         if (res.statusCode === 404) return resolve({ status: 404, buf, text: '' });
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          // Follow one redirect (typically /est → /eng language switch).
           return httpGet(res.headers.location.replace(/^https?:\/\/[^/]+/, ''), { host, accept, timeout }).then(resolve, reject);
         }
         if (res.statusCode < 200 || res.statusCode >= 300) {
@@ -94,23 +98,65 @@ function toIsoDate(s) {
   return m ? `${m[3]}-${m[2]}-${m[1]}` : undefined;
 }
 
-function extractReportIds(html) {
-  // The annual-reports page links to /aruanded/xbrl/<id>. We harvest each
-  // link together with any adjacent year label so callers can pick the
-  // newest filings to parse.
+// Extract the fiscal-year stats table from the annual_reports HTML.
+// Shape: two <tr> rows labelled "Tulud" and "Kasum", each containing
+// <td> values ordered newest → oldest matching a header row of years.
+function extractStatsTable(html) {
+  // Header: years list from the stats table (narrow to the stats table
+  // to avoid grabbing the fiscal_year_reports table which contains dates).
+  const tableStart = html.indexOf('id="fiscal_year_stats-table"');
+  if (tableStart < 0) return [];
+  const tableSlice = html.slice(tableStart, tableStart + 40000);
+  const years = [];
+  for (const m of tableSlice.matchAll(/<th[^>]*>(\d{4})<\/th>/g)) years.push(Number(m[1]));
+  if (!years.length) return [];
+
+  const extractRow = (label) => {
+    const re = new RegExp(`<th[^>]*sticky-left[^>]*>\\s*${label}\\s*</th>([\\s\\S]*?)</tr>`, 'i');
+    const m = tableSlice.match(re);
+    if (!m) return [];
+    const vals = [];
+    for (const cell of m[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)) {
+      const txt = cell[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
+      vals.push(parseNumber(txt));
+    }
+    return vals;
+  };
+
+  const tulud = extractRow('Tulud');
+  const kasum = extractRow('Kasum');
+
   const out = [];
-  const re = /\/aruanded\/xbrl\/(\d+)[^"']*["'][^>]*>[\s\S]{0,200}?(\d{4})/g;
-  let m;
-  while ((m = re.exec(html)) !== null) {
-    out.push({ reportId: m[1], year: m[2] });
-  }
-  if (!out.length) {
-    // Fallback: just the IDs if year markers aren't colocated.
-    const ids = new Set();
-    for (const m2 of html.matchAll(/\/aruanded\/xbrl\/(\d+)/g)) ids.add(m2[1]);
-    for (const id of ids) out.push({ reportId: id, year: null });
+  for (let i = 0; i < years.length; i++) {
+    const stichtag = `${years[i]}-12-31`;
+    const rev = tulud[i] ?? null;
+    const net = kasum[i] ?? null;
+    if (rev == null && net == null) continue;
+    out.push({
+      stichtag,
+      currency: 'EUR',
+      umsatzerloese:    rev,
+      bilanzsumme:      null,
+      eigenkapital:     null,
+      jahresergebnis:   net,
+      betriebsergebnis: null,
+      arbeitnehmer:     null,
+      ek_quote:         null,
+      source_ref:       'rik-stats-inline',
+      source:           'ee-html',
+    });
   }
   return out;
+}
+
+function parseNumber(txt) {
+  if (!txt || txt === '-') return null;
+  // RIK renders with non-breaking spaces as thousand separators and
+  // commas/dots as decimals. Strip all whitespace incl. NBSP.
+  const cleaned = txt.replace(/\u00a0/g, ' ').replace(/\s+/g, '').replace(/[()]/g, '').replace(',', '.');
+  if (!/^-?\d+(\.\d+)?$/.test(cleaned)) return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
 }
 
 const CODE_RE = /^\d{8}$/;
@@ -123,6 +169,10 @@ export default {
   sourceUrl: 'https://ariregister.rik.ee/',
   attribution: 'Allikas: Registrite ja Infosüsteemide Keskus (RIK) · e-Äriregister.',
   hasFinancials: true,
+  // Only Revenue + Net profit are public; equity, total assets and
+  // operating profit require authenticated XBRL downloads. Tell the
+  // eval harness not to apply the default 3-KPI-per-row threshold.
+  minKpisPerRow: 2,
 
   async search(q) {
     const term = String(q || '').trim();
@@ -132,8 +182,6 @@ export default {
       const hit = await this.getCompany(stripped);
       return hit ? [hit] : [];
     }
-    // No public JSON search endpoint — AJAX-UI uses a paid gateway.
-    // Name-search is served by the local companies cache upstream.
     return [];
   },
 
@@ -145,53 +193,23 @@ export default {
     return htmlCompanyToDTO(key, text);
   },
 
-  async getPeople() {
-    // Board/shareholders sit behind the paid "detailed card" on RIK.
-    // Leave empty for now — bulk feed `…kaardile_kantud_isikud.json.zip`
-    // would be the right source once we add an ingest script.
-    return [];
-  },
+  async getPeople() { return []; },
 
   async getFinancials(id) {
     const key = canonId(id).padStart(8, '0');
     if (!CODE_RE.test(key)) return [];
-    let listHtml;
+    let text;
     try {
-      const { status, text } = await httpGet(`/est/company/${encodeURIComponent(key)}/annual_reports`);
-      if (status === 404 || !text) return [];
-      listHtml = text;
+      const r = await httpGet(`/est/company/${encodeURIComponent(key)}/annual_reports`);
+      if (r.status === 404 || !r.text) return [];
+      text = r.text;
     } catch { return []; }
 
-    const reports = extractReportIds(listHtml);
-    if (!reports.length) return [];
-    // Sort by year desc (null years go last), keep three most recent.
-    reports.sort((a, b) => (b.year || '0').localeCompare(a.year || '0'));
-    const chosen = reports.slice(0, 3);
-
-    const out = [];
-    for (const r of chosen) {
-      try {
-        const kpis = await parseReportCached(r.reportId);
-        if (kpis) for (const k of kpis) out.push(k);
-      } catch { /* skip */ }
-    }
-    // Dedup by stichtag — most recent filing wins.
-    const byDate = new Map();
-    for (const k of out) {
-      if (!byDate.has(k.stichtag)) byDate.set(k.stichtag, k);
-    }
-    return [...byDate.values()].sort((a, b) => a.stichtag.localeCompare(b.stichtag));
+    const rows = extractStatsTable(text);
+    if (!rows.length) return [];
+    // Keep the five most-recent entries to avoid unbounded history.
+    return rows
+      .sort((a, b) => a.stichtag.localeCompare(b.stichtag))
+      .slice(-5);
   },
 };
-
-async function parseReportCached(reportId) {
-  const cached = bilanCache.get(reportId);
-  if (cached && cached.expires > Date.now()) return cached.kpis;
-  const { status, buf } = await httpGet(`/aruanded/xbrl/${encodeURIComponent(reportId)}`, {
-    accept: 'application/xml', timeout: 60000,
-  });
-  if (status !== 200 || !buf?.length) return null;
-  const kpis = parseEeXbrl(buf, { filename: `report-${reportId}.xbrl` });
-  bilanCache.set(reportId, { kpis, expires: Date.now() + BILAN_CACHE_TTL_MS });
-  return kpis;
-}

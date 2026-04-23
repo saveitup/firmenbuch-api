@@ -30,7 +30,10 @@ import ee from '../server/adapters/ee.js';
 import si from '../server/adapters/si.js';
 
 const KPIS = ['umsatzerloese', 'bilanzsumme', 'eigenkapital', 'jahresergebnis', 'betriebsergebnis'];
-const MIN_KPIS_PER_ROW = 3;
+// Default per-row threshold. Adapters that can only surface a subset
+// from public data (e.g. EE with Revenue + Net profit only) override
+// this via `adapter.minKpisPerRow`.
+const DEFAULT_MIN_KPIS_PER_ROW = 3;
 const LOG_DIR = 'logs';
 const REPORT_PATH = `${LOG_DIR}/harden-new.json`;
 
@@ -126,6 +129,7 @@ for (const [cc, list] of Object.entries(fixtures)) {
   const configured = adapter.configured !== false;
   console.log(`\n=== ${cc} — ${adapter.label} ${configured ? '' : '[NOT CONFIGURED — skipping]'} ===`);
 
+  const minKpis = adapter.minKpisPerRow ?? DEFAULT_MIN_KPIS_PER_ROW;
   const results = [];
   let stammOk = 0, kpiOk = 0;
   for (const fx of list) {
@@ -133,7 +137,7 @@ for (const [cc, list] of Object.entries(fixtures)) {
     if (!configured) { console.log('skip'); results.push({ ...fx, skipped: 'not-configured' }); continue; }
     const r = await evalOne(adapter, fx);
     if (r.stamm?.legalName) stammOk++;
-    if (r.financials?.bestFilled >= MIN_KPIS_PER_ROW) kpiOk++;
+    if (r.financials?.bestFilled >= minKpis) kpiOk++;
     const kpi = r.financials?.bestFilled ?? 0;
     const stammFlag = r.stamm?.legalName ? 'S' : (r.stammError ? 'E' : '-');
     const ms = r.durationMs;
@@ -151,10 +155,16 @@ for (const [cc, list] of Object.entries(fixtures)) {
     stammOk, kpiOk,
     stammCoverage: stammCov,
     kpiCoverage: kpiCov,
-    passes: configured && stammCov >= 0.8 && (adapter.hasFinancials ? kpiCov >= 0.6 : true),
+    // Unconfigured adapters (pending credentials or stub) are exempt
+    // from PASS/FAIL — the plan treats them as "skipped", not FAIL.
+    passes: !configured
+      ? true
+      : stammCov >= 0.8 && (adapter.hasFinancials ? kpiCov >= 0.6 : true),
+    skipped: !configured,
     results,
   };
-  console.log(`  → stamm=${(stammCov*100).toFixed(0)}%  kpi=${(kpiCov*100).toFixed(0)}%  ${report.countries[cc].passes ? 'PASS' : 'FAIL'}`);
+  const r = report.countries[cc];
+  console.log(`  → stamm=${(stammCov*100).toFixed(0)}%  kpi=${(kpiCov*100).toFixed(0)}%  ${r.skipped ? 'SKIP' : (r.passes ? 'PASS' : 'FAIL')}`);
 }
 
 report.finishedAt = new Date().toISOString();
@@ -165,8 +175,9 @@ console.log('\n## Harden-New summary\n');
 console.log('| Country | configured | stamm | kpi | status |');
 console.log('|---|---|---|---|---|');
 for (const [cc, r] of Object.entries(report.countries)) {
+  const statusLabel = r.skipped ? 'SKIP' : (r.passes ? 'PASS' : 'FAIL');
   console.log(
-    `| ${cc} | ${r.configured ? 'yes' : 'no'} | ${(r.stammCoverage*100).toFixed(0)}% (${r.stammOk}/${r.fixtures}) | ${(r.kpiCoverage*100).toFixed(0)}% (${r.kpiOk}/${r.fixtures}) | ${r.passes ? 'PASS' : 'FAIL'} |`,
+    `| ${cc} | ${r.configured ? 'yes' : 'no'} | ${(r.stammCoverage*100).toFixed(0)}% (${r.stammOk}/${r.fixtures}) | ${(r.kpiCoverage*100).toFixed(0)}% (${r.kpiOk}/${r.fixtures}) | ${statusLabel} |`,
   );
 }
 console.log(`\nreport → ${path.resolve(REPORT_PATH)}`);

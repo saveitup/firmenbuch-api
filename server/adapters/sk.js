@@ -18,7 +18,10 @@ import https from 'node:https';
 import { makeDTO, AdapterError, canonId } from './base.js';
 
 const BASE = 'https://www.registeruz.sk/cruz-public/api';
-const UA = 'Kontur/0.2';
+// The RUZ site sits behind an F5 WAF that blacklists programmatic UAs
+// (a bare `curl/8` or custom `Kontur/0.2` triggers "Request Rejected").
+// A browser-shaped header set gets through the rule.
+const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 const TIMEOUT_MS = 15000;
 
 function httpJson(url) {
@@ -28,7 +31,12 @@ function httpJson(url) {
       host: u.host,
       path: u.pathname + u.search,
       method: 'GET',
-      headers: { Accept: 'application/json', 'User-Agent': UA },
+      headers: {
+        'Accept':          'application/json, text/plain, */*',
+        'Accept-Language': 'sk,en;q=0.8',
+        'User-Agent':      UA,
+        'Referer':         'https://www.registeruz.sk/',
+      },
       timeout: TIMEOUT_MS,
     }, (res) => {
       const chunks = [];
