@@ -72,27 +72,41 @@ const FR_BILANZ_MARKERS = /BILAN\s+ACTIF|BILAN\s+PASSIF|TOTAL\s+DE\s+L['\u2019]A
  * defaults to the AT-German §224 markers for backward compat.
  */
 export async function ocrPdf(pdfBytes, opts = {}) {
-  const { lang = 'deu', markers = BILANZ_MARKERS } = opts;
+  const {
+    lang = 'deu',
+    markers = BILANZ_MARKERS,
+    batch1 = BATCH_1,
+    batch2 = BATCH_2,
+    batch3 = BATCH_3,
+    // Minimum marker matches required to call the batch "sufficient".
+    // Glossy annual reports quote structural labels in the TOC and the
+    // CEO letter before the actual Balance Sheet — 1 match is a false
+    // positive. The true statement section repeats the label many times
+    // (row totals, section headers, note references), so 3+ hits is a
+    // reliable signal.
+    markerThreshold = 1,
+  } = opts;
+  const meets = (txt) => (txt.match(markers) || []).length >= markerThreshold;
   const dir = await mkdtemp(path.join(os.tmpdir(), 'kontur-ocr-'));
   const pdfPath = path.join(dir, 'in.pdf');
   try {
     await (await import('node:fs/promises')).writeFile(pdfPath, pdfBytes);
-    await runPdftoppm(pdfPath, path.join(dir, 'p'), 1, BATCH_3);
+    await runPdftoppm(pdfPath, path.join(dir, 'p'), 1, batch3);
     const pages = await listPages(dir);
 
-    const batch1 = await ocrPages(pages.slice(0, BATCH_1), TESSERACT_PSM_DEFAULT, lang);
-    if (markers.test(batch1)) return batch1;
+    const out1 = await ocrPages(pages.slice(0, batch1), TESSERACT_PSM_DEFAULT, lang);
+    if (meets(out1)) return out1;
 
-    const batch2 = await ocrPages(pages.slice(BATCH_1, BATCH_2), TESSERACT_PSM_DEFAULT, lang);
-    const combined12 = batch1 + '\n\n' + batch2;
-    if (markers.test(combined12)) return combined12;
+    const out2 = await ocrPages(pages.slice(batch1, batch2), TESSERACT_PSM_DEFAULT, lang);
+    const combined12 = out1 + '\n\n' + out2;
+    if (meets(combined12)) return combined12;
 
-    const batch3 = await ocrPages(pages.slice(BATCH_2, BATCH_3), TESSERACT_PSM_DEFAULT, lang);
-    const combined123 = combined12 + '\n\n' + batch3;
-    if (markers.test(combined123)) return combined123;
+    const out3 = await ocrPages(pages.slice(batch2, batch3), TESSERACT_PSM_DEFAULT, lang);
+    const combined123 = combined12 + '\n\n' + out3;
+    if (meets(combined123)) return combined123;
 
-    const retry = await ocrPages(pages.slice(0, BATCH_2), TESSERACT_PSM_FALLBACK, lang);
-    if (markers.test(retry)) return retry;
+    const retry = await ocrPages(pages.slice(0, batch2), TESSERACT_PSM_FALLBACK, lang);
+    if (meets(retry)) return retry;
     return combined123;
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -102,6 +116,26 @@ export async function ocrPdf(pdfBytes, opts = {}) {
 /** Convenience wrapper for French bilan filings. */
 export async function ocrPdfFr(pdfBytes) {
   return ocrPdf(pdfBytes, { lang: 'fra', markers: FR_BILANZ_MARKERS });
+}
+
+// UK / Companies House table markers — used to stop the OCR escalation
+// once we've hit an actual Balance Sheet / Profit & Loss section. Avoids
+// running all 80 pages on a 200-page annual report when the statements
+// fit on pages 40-60.
+const UK_BILANZ_MARKERS = /Balance\s+Sheet|Statement\s+of\s+Financial\s+Position|Profit\s+and\s+Loss\s+Account|Income\s+Statement|Total\s+assets|Total\s+equity|Net\s+assets\b/i;
+
+/** Convenience wrapper for UK Companies House filings. Larger batches
+ *  than the default because listed-company glossy reports typically
+ *  bury the Balance Sheet after page 100; markerThreshold=3 prevents an
+ *  early exit on a single mention of "balance sheet" in the table of
+ *  contents or CEO letter.
+ */
+export async function ocrPdfUk(pdfBytes) {
+  return ocrPdf(pdfBytes, {
+    lang: 'eng', markers: UK_BILANZ_MARKERS,
+    batch1: 20, batch2: 60, batch3: 140,
+    markerThreshold: 3,
+  });
 }
 
 async function ocrPages(pagePaths, psm = TESSERACT_PSM_DEFAULT, lang = 'deu') {
