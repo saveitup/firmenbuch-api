@@ -28,8 +28,10 @@ function appendAuth(url) {
   const key = apiKey();
   if (!key) return null;
   const u = new URL(url);
-  // Datafordeler expects `username=<api-key>` for free-data API-key access.
+  // Datafordeler expects the API key as BOTH `username` and `password`
+  // URL params (the webuser-style auth repurposed for free-data keys).
   u.searchParams.set('username', key);
+  u.searchParams.set('password', key);
   return u.toString();
 }
 
