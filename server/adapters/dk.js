@@ -1,10 +1,10 @@
 // Denmark — CVR (Centrale Virksomhedsregister) via Datafordeler distribution.
 // Endpoint: http://distribution.virk.dk/cvr-permanent/_search     (stamdata)
 //           http://distribution.virk.dk/offentliggoerelser/_search (regnskaber)
-// Auth:     HTTP Basic — username/password issued free by Datafordeler.
-//           Sign up: https://datafordeler.dk/ → "Selvbetjening" → create a
-//           webuser (no approval step needed; one key grants access to all
-//           free datasets including CVR-Permanent and Offentliggoerelser).
+// Auth:     API key (URL parameter). Register at https://datafordeler.dk/,
+//           create an IT-System, then "API-Schlüssel erstellen".
+//           The key is sent as a `username=<key>` URL parameter (the
+//           Datafordeler convention for free data access).
 // License:  Public data — commercial use allowed (Datafordeler terms).
 //
 // national_id = CVR-nummer, 8 digits.
@@ -20,22 +20,27 @@ const TIMEOUT_MS = 15000;
 const BILAN_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const bilanCache = new Map();
 
-function basicAuthHeader() {
-  const u = process.env.DK_CVR_USERNAME;
-  const p = process.env.DK_CVR_PASSWORD;
-  if (!u || !p) return null;
-  return 'Basic ' + Buffer.from(`${u}:${p}`).toString('base64');
+function apiKey() {
+  return process.env.DK_CVR_API_KEY || null;
 }
 
-function httpReq(url, { body = null, method = 'GET', timeout = TIMEOUT_MS, accept = 'application/json' } = {}) {
+function appendAuth(url) {
+  const key = apiKey();
+  if (!key) return null;
+  const u = new URL(url);
+  // Datafordeler expects `username=<api-key>` for free-data API-key access.
+  u.searchParams.set('username', key);
+  return u.toString();
+}
+
+function httpReq(rawUrl, { body = null, method = 'GET', timeout = TIMEOUT_MS, accept = 'application/json' } = {}) {
   return new Promise((resolve, reject) => {
-    const auth = basicAuthHeader();
-    if (!auth) return reject(new AdapterError('DK', 'DK_CVR_USERNAME/DK_CVR_PASSWORD missing in .env', { status: 503 }));
-    const u = new URL(url);
+    const authedUrl = appendAuth(rawUrl);
+    if (!authedUrl) return reject(new AdapterError('DK', 'DK_CVR_API_KEY missing in .env', { status: 503 }));
+    const u = new URL(authedUrl);
     const lib = u.protocol === 'https:' ? https : http;
     const headers = {
       Accept: accept,
-      Authorization: auth,
       'User-Agent': UA,
     };
     if (body) headers['Content-Type'] = 'application/json';
@@ -51,7 +56,7 @@ function httpReq(url, { body = null, method = 'GET', timeout = TIMEOUT_MS, accep
       res.on('end', () => {
         const buf = Buffer.concat(chunks);
         if (res.statusCode === 404) return resolve({ status: 404, body: null, buf });
-        if (res.statusCode === 401) return reject(new AdapterError('DK', 'Invalid DK_CVR credentials', { status: 503 }));
+        if (res.statusCode === 401) return reject(new AdapterError('DK', 'Invalid DK_CVR_API_KEY', { status: 503 }));
         if (res.statusCode < 200 || res.statusCode >= 300) {
           return reject(new AdapterError('DK', `HTTP ${res.statusCode}: ${buf.toString('utf8').slice(0, 200)}`, { status: 502 }));
         }
@@ -142,7 +147,7 @@ export default {
   attribution: 'Kilde: Erhvervsstyrelsen · CVR via Datafordeler.',
   hasFinancials: true,
   get configured() {
-    return !!(process.env.DK_CVR_USERNAME && process.env.DK_CVR_PASSWORD);
+    return !!process.env.DK_CVR_API_KEY;
   },
 
   async search(q) {
