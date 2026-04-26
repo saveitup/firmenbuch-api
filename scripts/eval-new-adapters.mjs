@@ -28,6 +28,7 @@ import dk from '../server/adapters/dk.js';
 import sk from '../server/adapters/sk.js';
 import ee from '../server/adapters/ee.js';
 import si from '../server/adapters/si.js';
+import pl from '../server/adapters/pl.js';
 
 const KPIS = ['umsatzerloese', 'bilanzsumme', 'eigenkapital', 'jahresergebnis', 'betriebsergebnis'];
 // Default per-row threshold. Adapters that can only surface a subset
@@ -66,9 +67,16 @@ const DEFAULT_FIXTURES = {
     { name: 'Petrol d.d.',             id: '5025796' },
     { name: 'Lek farmacevtska družba', id: '5045639' },
   ],
+  PL: [
+    { name: 'ORLEN S.A.',              id: 'NIP:7740001454' },
+    { name: 'PKO BP S.A.',             id: '0000026438' },
+    { name: 'KGHM Polska Miedź S.A.',  id: '0000023302' },
+    { name: 'CD Projekt S.A.',         id: '0000006865' },
+    { name: 'Allegro.eu S.A.',         id: 'NIP:5252674798' },
+  ],
 };
 
-const ADAPTERS = { DK: dk, SK: sk, EE: ee, SI: si };
+const ADAPTERS = { DK: dk, SK: sk, EE: ee, SI: si, PL: pl };
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((s) => {
