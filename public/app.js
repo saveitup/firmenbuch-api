@@ -12,6 +12,7 @@ const els = {
   input: document.getElementById('search-input'),
   button: document.getElementById('search-button'),
   status: document.getElementById('search-status'),
+  resultFacets: document.getElementById('result-facets'),
   results: document.getElementById('results'),
   detail: document.getElementById('detail'),
   footerSources: document.getElementById('footer-sources'),
@@ -25,6 +26,8 @@ let countries = [];
 let activeCountryFilter = '';
 let suppressHashChange = false;
 let lastSearchKey = '';       // `q::c` — memo to avoid refetch on detail-back
+let lastSearchGroups = [];    // raw groups from the last /api/search response
+let activeFacets = new Set(); // post-search client-side country filter (multi-select); empty = "Alle"
 
 const EXAMPLES = [
   { cc: 'AT', q: 'OMV',              label: 'OMV'                },
@@ -193,6 +196,9 @@ function onHashChange() {
     hideDetail();
     els.results.innerHTML = '';
     els.results.hidden = false;
+    els.resultFacets.hidden = true;
+    activeFacets.clear();
+    lastSearchGroups = [];
     els.emptyState.hidden = false;
     lastSearchKey = '';
     setStatus('');
@@ -216,6 +222,7 @@ function onHashChange() {
     // the detail card sits right below the hero, no scroll gymnastics.
     els.emptyState.hidden = true;
     els.results.hidden = true;
+    els.resultFacets.hidden = true;
     window.scrollTo({ top: 0, behavior: 'instant' });
     showDetail(state.country, state.id);
     return;
@@ -241,6 +248,9 @@ async function runSearch(q, cc) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Suche fehlgeschlagen');
     const groups = data.results || [];
+    lastSearchGroups = groups;
+    activeFacets = new Set();          // reset facet selection on every fresh search
+    renderFacets(groups);
     renderResults(groups);
     const total = groups.reduce((n, g) => n + (g.hits?.length || 0), 0);
     const withHits = groups.filter((g) => g.hits?.length).length;
@@ -254,7 +264,11 @@ async function runSearch(q, cc) {
 
 function renderResults(groups) {
   els.results.innerHTML = '';
-  const sorted = [...groups].sort((a, b) => {
+  // Apply facet filter client-side. Empty set means "Alle Länder".
+  const filtered = activeFacets.size
+    ? groups.filter((g) => activeFacets.has(g.country))
+    : groups;
+  const sorted = [...filtered].sort((a, b) => {
     const ha = a.hits?.length || 0, hb = b.hits?.length || 0;
     if (ha !== hb) return hb - ha;
     if (!!a.error !== !!b.error) return a.error ? 1 : -1;
@@ -354,6 +368,54 @@ async function fetchOneKpi(item, parentSignal) {
     }));
     li.classList.add('has-kpi');
   }
+}
+
+// Result-facets bar: one chip per country that returned hits, plus an
+// "Alle" chip on the left. Multi-select — clicking toggles a country in
+// `activeFacets`; "Alle" clears the set. Hidden when ≤1 country has hits
+// (no faceting value).
+function renderFacets(groups) {
+  els.resultFacets.innerHTML = '';
+  const withHits = groups.filter((g) => (g.hits?.length || 0) > 0);
+  if (withHits.length < 2) {
+    els.resultFacets.hidden = true;
+    return;
+  }
+  els.resultFacets.hidden = false;
+
+  const totalHits = withHits.reduce((n, g) => n + g.hits.length, 0);
+  els.resultFacets.appendChild(makeFacetPill('', `Alle · ${totalHits}`, activeFacets.size === 0));
+
+  const sorted = [...withHits].sort((a, b) => b.hits.length - a.hits.length);
+  for (const g of sorted) {
+    const country = countries.find((c) => c.id === g.country);
+    const label = `${g.country} · ${g.hits.length}`;
+    const pill = makeFacetPill(g.country, label, activeFacets.has(g.country));
+    pill.title = country?.label || g.country;
+    els.resultFacets.appendChild(pill);
+  }
+}
+
+function makeFacetPill(cc, label, isActive) {
+  const pill = document.createElement('button');
+  pill.type = 'button';
+  pill.className = 'facet-pill' + (isActive ? ' active' : '');
+  pill.dataset.cc = cc;
+  pill.textContent = label;
+  pill.addEventListener('click', () => onFacetClick(cc));
+  return pill;
+}
+
+function onFacetClick(cc) {
+  if (cc === '') {
+    activeFacets.clear();
+  } else if (activeFacets.has(cc)) {
+    activeFacets.delete(cc);
+  } else {
+    activeFacets.add(cc);
+  }
+  renderFacets(lastSearchGroups);
+  renderResults(lastSearchGroups);
 }
 
 function renderGroup(group) {
