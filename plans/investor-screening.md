@@ -206,7 +206,7 @@ als `npm run …`-Skripte mit Checkpoints bzw. einer SQLite-Job-Tabelle.
 | --- | --- | --- |
 | 0.1 | **Kosten & Limits** der HVD/IWG-Calls (`server/index.js` notiert eine Gebühr pro URKUNDE). Self-funded Search ⇒ Kosten zählen. | Bulk ja/nein; Strategie „jeden 2. Abschluss laden, Vorjahr aus `BETRAG_VJ`“ |
 | 0.2 | ✅ **GuV-, Vorjahres- und Mitarbeiter-Abdeckung** — erledigt, siehe [phase0](investor-screening.phase0.md#02--was-die-jab-xmls-enthalten): Vollform-Abschlüsse haben eine komplette GuV (BMF-Parser ignoriert sie bisher), Vorjahr immer befüllt | Parser-Mapping; Anteil Tier A |
-| 0.3 | **Veränderungen-Feed** (Firmen/Urkunden, Tagesfenster) mit unserem Token; Volumen pro Tag | Universe-Aufbau |
+| 0.3 | ✅ **Veränderungen-Feed** — erledigt, siehe [phase0](investor-screening.phase0.md#03--veränderungen-feeds): beide Feeds laufen, Wochenfenster gehen, Historie ≥ 2 Jahre; ~150–200 Tsd. Abschlüsse/Jahr, fast alle als XML | Universe-Aufbau |
 | 0.4 | ✅ **AUSZUG-Inhalt** — erledigt, siehe [phase0](investor-screening.phase0.md#04--was-der-auszug-liefert): nur „Kurzinformation“ verfügbar, also GF/Vorstand/Prokura mit Geburtsjahr und Beginn, aber **keine Gesellschafter**; Geschäftszweig und Homepage nur selten eingetragen | Deal-Readiness-Signale |
 | 0.5 | **Website-Trefferquote** über Impressum-FN (§ 5 ECG) an 100 Firmen | Discovery-Strategie |
 | 0.6 | **LLM-Qualität & Kosten je Tiefenstufe** an 30 Firmen (Opus 5.5 / Sonnet 5.5 / Haiku 5.5) gegen manuell erstellte Soll-Profile | Modell + Token-Budget je Stufe |
@@ -230,9 +230,14 @@ Entscheidungen.
    Nachfolger). **Eigentümerstruktur** (Gesellschafter-GF, Anteile,
    Holding-Kette) nur für Priority-Kandidaten über einen kostenpflichtigen
    vollen Auszug, sonst UNKNOWN.
-3. `scripts/at-universe.mjs`: Veränderungen-Feed rückwärts (≈ 24 Monate) →
-   alle Firmen mit eingereichtem Jahresabschluss; Fallback SUCHEFIRMA mit
-   Rechtsform-Filter. Idempotent, mit Checkpoint.
+3. `scripts/at-universe.mjs`: `VERAENDERUNGENURKUNDE` rückwärts über
+   ≈ 24 Monate in **Wochenfenstern** (~104 Calls, ~45 min). Ergebnis: alle
+   Firmen mit eingereichtem Jahresabschluss samt direkt ladbarem
+   Dokument-`KEY` (kein SUCHEFIRMA/SUCHEURKUNDE nötig). Zusätzlich je Firma
+   festhalten, ob Lagebericht (51), Bestätigungsvermerk (27) oder
+   Konzernabschluss (49) eingereicht wurden: das ist der Vorfilter für
+   mittelgroß/groß (Hypothese, siehe phase0 § 0.3). Neueintragungen und
+   Löschungen kommen aus `VERAENDERUNGENFIRMA`. Idempotent, mit Checkpoint.
 4. Konzern-/Holding-Erkennung über die Bilanzstruktur (Finanzanlagen
    dominieren, kaum Personalaufwand, Kurzform trotz hoher Bilanzsumme):
    Holdings markieren, damit der Screener keine leeren Holdings rankt. Die
@@ -265,9 +270,15 @@ Entscheidungen.
      kosten
    - BMF-Legacy bleibt für historische Jahre nötig (seit 1.3.2025 ist
      JAb 4.0 Pflicht)
-2. `scripts/at-jab-ingest.mjs`: XML bevorzugt, direkt `upsertFinancials`;
-   PDF/OCR nur für Qualified-Kandidaten und nur, wenn 0.1 es erlaubt.
-   Danach inkrementell über den Urkunden-Feed.
+2. `scripts/at-jab-ingest.mjs`: XML-`KEY`s aus dem Universe laden, direkt
+   `upsertFinancials`. Reihenfolge nach Vorfilter: zuerst Firmen mit
+   Lagebericht/Bestätigungsvermerk, dann der Rest, sofern 0.1 das erlaubt.
+   PDF/OCR nur für Qualified-Kandidaten. Danach inkrementell: 1 Feed-Call
+   pro Tag. Dokumentarten:
+   - Jahresabschluss (48)
+   - „berichtigt“ (137) ersetzt denselben Stichtag
+   - „vorläufig“ (164) wird später ersetzt
+   - Konzernabschluss (49) separat führen
 3. `npm run eval:at`: 20 Firmen, Soll-Werte von Hand aus den PDFs.
 
 **Exit:** Im Größenband haben ≥ 85 % der Firmen ≥ 2 Bilanzjahre;
@@ -491,9 +502,12 @@ manuell (±1 Punkt) ≥ 70 % in den automatisierbaren Kategorien.
   Bewertungs-/Finanzierungsrahmen (EV 4–7x, Schulden 2–3x, EK-Lücke,
   mögliches Seller Loan), Nachfolgesituation, Mandats-Check, **offene
   DD-Fragen** (alles, was UNKNOWN ist). Export als Markdown/PDF.
-- **Monitoring** über den Veränderungen-Feed für Pipeline-Firmen: neuer
-  Abschluss, GF-/Gesellschafterwechsel (Signal: Nachfolge geregelt oder Deal
-  weg), Insolvenz-/Liquidationseintrag → Hinweis in der Pipeline.
+- **Monitoring** über die Veränderungen-Feeds für Pipeline-Firmen: neuer
+  Abschluss (Urkunden-Feed), GF-/Prokura-Wechsel (Signal: Nachfolge geregelt
+  oder Deal weg), Löschung/Liquidation → Hinweis in der Pipeline. Der
+  Firmen-Feed nennt nur die FN, nicht was sich geändert hat. Deshalb für
+  Treffer die Kurzinformation neu laden und mit dem letzten Stand
+  vergleichen.
 
 ### Phase 9 — Erweiterung DE/CH (nach den 90 Tagen, mit eigenem Spike)
 

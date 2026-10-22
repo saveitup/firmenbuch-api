@@ -6,7 +6,7 @@ Gehört zu [investor-screening.md](investor-screening.md). Stand 2026-10-22.
 | --- | --- |
 | 0.1 Kosten & Limits HVD/IWG | offen |
 | **0.2 GuV-/Vorjahres-/AN-Abdeckung** | **erledigt** (unten) |
-| 0.3 Veränderungen-Feed | offen. Die Operationen `VERAENDERUNGENFIRMA` (VON, BIS, GERICHT, RECHTSFORM, ARTDERVERAENDERUNG) und `VERAENDERUNGENURKUNDE` (VON, BIS) stehen in der WSDL, Volumen noch nicht gemessen |
+| **0.3 Veränderungen-Feed** | **erledigt** (unten) |
 | **0.4 AUSZUG-Inhalt** | **erledigt** (unten) |
 | 0.5 Website-Trefferquote | offen |
 | 0.6 LLM-Qualität & Kosten | offen |
@@ -17,6 +17,7 @@ Re-Run ohne neue IWG-Calls (Rohdaten liegen gitignored in `data/staging-at-*`):
 ```bash
 node --env-file=.env scripts/spike-at-jab.mjs
 node scripts/spike-at-auszug.mjs --analyse
+node scripts/spike-at-veraenderungen.mjs --analyse
 ```
 
 ---
@@ -210,3 +211,89 @@ Beispiele, wie die Signale sich lesen:
    wichtiger.
 4. **Homepage aus dem Register** ist ein Bonus, ersetzt aber nicht die
    Discovery über Impressum und Common Crawl (Phase 5).
+
+---
+
+## 0.3 — Veränderungen-Feeds
+
+**Stichprobe:** 9 Einzeltage von Okt. 2024 bis Okt. 2026 (ein Dienstag je
+Quartal, der 29.9. kurz vor der Offenlegungsfrist, ein Sonntag) plus ein
+7-Tage-Fenster, jeweils für beide Operationen. Alle 20 Abrufe waren
+erfolgreich.
+
+### Zugang und Technik
+
+| | `VERAENDERUNGENURKUNDE` | `VERAENDERUNGENFIRMA` |
+| --- | --- | --- |
+| Request | `VON`, `BIS` | `VON`, `BIS`, optional `GERICHT`, `RECHTSFORM`, `ARTDERVERAENDERUNG` |
+| Antwort je Eintrag | `KEY` (beginnt mit der FN), `DOKUMENTART` (Code/Text), `VOLLZUGSDATUM`, `CONTENTTYPE` | `FNR`, `VNR`, `VOLLZUGSDATUM`, `ARTDERVERAENDERUNG`, `DETAIL` |
+| Antwortzeit | **~16–18 s Grundlast** pro Call (auch bei 0 Treffern); 7 Tage in der Hochsaison: 22 s, 5,8 MB | 1–3 s pro Tag; 7 Tage: 6 s |
+| Großes Fenster | 7 Tage mit 16 942 Einträgen ohne Fehler | 7 Tage mit 9 770 Einträgen ohne Fehler |
+| Historie | mindestens bis Okt. 2024 verfügbar | dito |
+| Wochenende | Sonntag: 0 Einträge | dito |
+
+### Volumen: Jahresabschlüsse (Code 48) pro Werktag
+
+| Tag | Firmen mit JAb | JAb-Dokumente | alle Dokumente |
+| --- | --- | --- | --- |
+| Di 20.01.2026 | 128 | 250 | 318 |
+| Di 17.03.2026 | 231 | 458 | 492 |
+| Di 19.05.2026 | 498 | 986 | 1 051 |
+| Di 21.07.2026 | 834 | 1 655 | 1 764 |
+| **Di 29.09.2026** (Frist 30.9.) | **4 497** | **8 953** | **9 423** |
+| Mo–Fr 12.–16.10.2026 (Ø) | 1 561 | 3 119 | 3 388 |
+| Di 20.10.2026 | 2 001 | 3 969 | 4 384 |
+| Di 18.11.2025 | 377 | 748 | 926 |
+| Di 15.10.2024 | 2 319 | 4 602 | 4 879 |
+
+- **Hochrechnung:** grob **150 000–200 000 Jahresabschlüsse pro Jahr**,
+  stark saisonal (Spitze um die Frist am 30.9.). Die Werte zwischen den
+  Stichtagen sind interpoliert; die exakte Zahl liefert der Backfill.
+- **Praktisch jeder Abschluss liegt als XML vor:** Die JAb-Dokumente sind
+  fast immer XML/PDF-Paare (z. B. 29.9.: 4 452 XML bei 4 497 Firmen).
+  PDF/OCR braucht es nur noch für ältere Jahrgänge.
+- **Weitere Dokumentarten** (20.10.): Jahresabschluss berichtigt (137): 85,
+  Bestätigungsvermerk (27): 85, Lagebericht (51): 80, Jahresabschluss
+  vorläufig/unvollständig (164): 79, Konzernabschluss (49): 30,
+  Liquidationsschlussbilanz (136): 14.
+
+### Firmen-Feed
+
+- Pro Werktag 675–5 192 Veränderungen. Die meisten sind „Änderung“ und
+  folgen der JAb-Saison: Die Einreichung eines Abschlusses zählt
+  offenbar als Änderung.
+- **Neueintragungen 84–165 und Löschungen 54–105 pro Werktag.** Damit lässt
+  sich der Status des Universe ohne Einzelabfragen aktuell halten.
+- **`DETAIL` war in allen Stichproben leer.** Was sich geändert hat (z. B.
+  ein GF-Wechsel), steht also nicht im Feed.
+
+### Konsequenzen für den Plan
+
+1. **Universe direkt aus dem Urkunden-Feed:** Jeder JAb-`KEY` trägt die FN
+   und ist sofort per URKUNDE ladbar. SUCHEURKUNDE pro Firma entfällt, das
+   spart einen Call je Firma. Backfill über 24 Monate in **Wochenfenstern:
+   ~104 Calls, ~45 min**, danach 1 Call pro Tag (~20 s).
+2. **Der Engpass ist der Dokument-Download, nicht der Feed:** Bei ~175 000
+   Firmen pro Jahr liefert ein XML pro Firma dank Vorjahresspalte schon zwei
+   Jahre. Das wären trotzdem ~175 000 URKUNDE-Calls für das volle Universe.
+   Ob das wirtschaftlich ist, entscheidet 0.1 (Gebühren).
+3. **Möglicher Vorfilter ohne Download (Hypothese):** Lagebericht und
+   Abschlussprüfung sind für mittelgroße und große Gesellschaften Pflicht.
+   Firmen mit Lagebericht (51) oder Bestätigungsvermerk (27) im Feed sind
+   dann wahrscheinlich mittelgroß/groß, also Tier A mit GuV. Das betraf im
+   Sample **612 von 18 376 Firmen (3,3 %)**. Auf das Jahr hochgerechnet wären
+   das einige Tausend Firmen. Bisher nur negativ gestützt: Alle 10 Firmen aus
+   Feed ∩ DB sind klein und ohne Lagebericht. **Positiv prüfen:** ~20 XMLs
+   geflaggter Firmen laden und nachsehen, ob es Vollform-Abschlüsse
+   (JAB / v4 G·M) sind.
+   - Kleine Firmen im unteren Kernkorridor (≤ 12,5 Mio. € Umsatz) fängt der
+     Vorfilter nicht; sie brauchen den Download und sind Tier B.
+4. **Ingest muss weitere Dokumentarten kennen** (Phase 2):
+   - „berichtigt“ (137) ersetzt den Abschluss desselben Stichtags
+   - „vorläufig/unvollständig“ (164) wird später ersetzt
+   - Konzernabschluss (49) hilft bei der Holding-Erkennung
+   - `at.js` berücksichtigt heute nur Code 48
+5. **Monitoring** (Phase 8): FNRs aus dem Firmen-Feed mit den
+   Pipeline-Firmen schneiden, für Treffer die Kurzinformation neu laden und
+   mit dem letzten Stand vergleichen, weil der Feed selbst keine Details
+   liefert.
