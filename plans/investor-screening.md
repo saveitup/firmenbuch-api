@@ -509,6 +509,14 @@ markiert „mehr Recherche nötig“.
   Unterbewertung, Fehlerband der Schätzer → Gewichte/Schwellen in
   `mandate.local.json` anpassen → Mandatsversion 1.1
 
+✅ **Screener v1** (vor Score und KI-Profil): Route `#screen`,
+`GET /api/screen` + `/api/screen.csv` (`server/screen.js`):
+- Filter: EBITDA-Band Kern/erweitert/alle, Bundesland, Konzern,
+  übernahmefähige Rechtsform, Name
+- sortierbare Spalten: Umsatz bzw. Rohergebnis, EBITDA, Δ VJ, Marge,
+  Bilanzsumme, EK-Quote, Organe als Kontext
+- Klick auf eine Zeile öffnet die Detailansicht
+
 **UI** (`public/`, Tokens nur in `public/design/`): Tabs **Screener**
 (Filter: Kern/erweitert, Cluster, Region, Tier, Score-Band, Deal Readiness;
 Tabelle mit Score-Spanne und Badges), **Pipeline** (Kanban nach Stufen),
