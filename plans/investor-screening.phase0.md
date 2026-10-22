@@ -277,17 +277,12 @@ erfolgreich.
    Firmen pro Jahr liefert ein XML pro Firma dank Vorjahresspalte schon zwei
    Jahre. Das wären trotzdem ~175 000 URKUNDE-Calls für das volle Universe.
    Ob das wirtschaftlich ist, entscheidet 0.1 (Gebühren).
-3. **Möglicher Vorfilter ohne Download (Hypothese):** Lagebericht und
-   Abschlussprüfung sind für mittelgroße und große Gesellschaften Pflicht.
-   Firmen mit Lagebericht (51) oder Bestätigungsvermerk (27) im Feed sind
-   dann wahrscheinlich mittelgroß/groß, also Tier A mit GuV. Das betraf im
-   Sample **612 von 18 376 Firmen (3,3 %)**. Auf das Jahr hochgerechnet wären
-   das einige Tausend Firmen. Bisher nur negativ gestützt: Alle 10 Firmen aus
-   Feed ∩ DB sind klein und ohne Lagebericht. **Positiv prüfen:** ~20 XMLs
-   geflaggter Firmen laden und nachsehen, ob es Vollform-Abschlüsse
-   (JAB / v4 G·M) sind.
-   - Kleine Firmen im unteren Kernkorridor (≤ 12,5 Mio. € Umsatz) fängt der
-     Vorfilter nicht; sie brauchen den Download und sind Tier B.
+3. **Vorfilter ohne Download — bestätigt** (Prüfung unten): Firmen mit
+   Lagebericht (51) oder Bestätigungsvermerk (27) im Feed reichen eine
+   Vollform mit GuV ein (20 von 20). Im Sample betraf das **612 von 18 376
+   Firmen (3,3 %)**, hochgerechnet ~5 000–6 000 Firmen pro Jahr. Kleine
+   Firmen im unteren Kernkorridor (≤ 12,5 Mio. € Umsatz) fängt der Vorfilter
+   nicht; sie brauchen den Download und sind Tier B.
 4. **Ingest muss weitere Dokumentarten kennen** (Phase 2):
    - „berichtigt“ (137) ersetzt den Abschluss desselben Stichtags
    - „vorläufig/unvollständig“ (164) wird später ersetzt
@@ -297,3 +292,46 @@ erfolgreich.
    Pipeline-Firmen schneiden, für Treffer die Kurzinformation neu laden und
    mit dem letzten Stand vergleichen, weil der Feed selbst keine Details
    liefert.
+
+### Vorfilter-Prüfung (Lagebericht/Bestätigungsvermerk → Vollform?)
+
+**Stichprobe:** 20 der 609 Firmen, die im Feed-Sample einen Lagebericht oder
+Bestätigungsvermerk *und* einen XML-Jahresabschluss eingereicht haben.
+Gleichmäßig über den FN-Bereich verteilt (jede 30. Firma); alle 20 hatten
+beides eingereicht. Liste: `data/staging-at-veraenderungen/prefilter-sample.json`,
+Ergebnis: `logs/spike-prefilter.json`.
+
+| Ergebnis | Anzahl |
+| --- | --- |
+| **Vollform mit GuV** | **20 / 20** (95 %-Konfidenz: ≥ 83 %) |
+| davon v4 mittelgroß (`M`) | 8 |
+| davon v4 groß (`G`) | 6 |
+| davon BMF Vollform (`JAB`) | 6 |
+| **EBITDA im Mandatsband 1,5–5 Mio. €** | **9 / 20** |
+
+**Befund für das Mandat — Rohergebnis statt Umsatz:** 13 der 14
+mittelgroßen Abschlüsse (7 von 8 v4-M, alle 6 BMF-JAB) weisen **nur das
+Rohergebnis** aus, keinen Umsatz. Alle 6 großen nennen den Umsatz.
+- **EBITDA ist bei allen 20 berechenbar.** Die **EBITDA-Marge** (Mandat
+  ≥ 15 %) ist es bei den mittelgroßen aber nicht ohne Umsatzschätzung.
+- Bester Schätz-Input: Umsatz ≈ Rohergebnis / Rohertragsquote der Branche
+  (Großhandel niedrig, Dienstleistung hoch), als Spanne je Cluster
+  (Plan § 4).
+- Alternativ als robuste Qualitätskennzahl: EBITDA / Rohergebnis.
+
+**Parser-Fixes aus dieser Stichprobe:** Die 20 Vollform-Dateien deckten
+zwei Lücken auf, beide behoben und von `npm run check:jab` (jetzt
+35 Dateien) abgedeckt:
+1. Neuere v4-Abschlüsse benennen die sonstigen betrieblichen Erträge nach
+   der Darstellung (`…_ZU_ROHERGEBNIS`, `…_ZU_UMSATZERLOESE`).
+2. **Vorzeichen sind nicht einheitlich:** Manche Einreich-Software meldet
+   Aufwendungen positiv. Der Parser normalisiert jetzt auf „Aufwand < 0“;
+   Ertragsteuern werden aus Ergebnis nach minus vor Steuern hergeleitet,
+   weil sie auch eine Erstattung sein können.
+
+EBITDA und Betriebserfolg waren von beidem nicht betroffen (direkt gelesen
+bzw. mit |AfA| berechnet).
+
+**Nebenbefund Dateigröße:** Vollform-XMLs sind 0,2–7 MB groß, kleine
+Abschlüsse 6–25 KB. Wer das Roh-XML für ~6 000 Vollform-Firmen pro Jahr
+speichert, sollte komprimieren.

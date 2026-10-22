@@ -75,6 +75,22 @@ function ebitdaOf(guv) {
     : null;
 }
 
+// Most filings report expense lines as negative amounts, but some filing
+// software reports every line positive and lets the position imply the sign.
+// Normalise to "expense < 0": pure expense lines become −|x|; income taxes
+// can be a refund, so they are taken from the subtotals where both exist.
+const EXPENSE_LINES = ['materialaufwand', 'personalaufwand', 'abschreibungen', 'sonstigeBetrieblicheAufwendungen', 'zinsaufwand'];
+
+function normaliseGuvSigns(guv) {
+  for (const field of EXPENSE_LINES) {
+    if (guv[field] != null) guv[field] = -Math.abs(guv[field]);
+  }
+  if (guv.ergebnisVorSteuern != null && guv.ergebnisNachSteuern != null) {
+    guv.steuernEinkommen = Math.round((guv.ergebnisNachSteuern - guv.ergebnisVorSteuern) * 100) / 100;
+  }
+  return guv;
+}
+
 /**
  * Parse a JAb XML blob (already base64-decoded).
  * Returns a single KPI row, or null if the payload isn't a v4 JAb. BMF
@@ -154,10 +170,12 @@ function v4Year(envelope, mul, col) {
 // separate Abschreibungen line — EBITDA comes back null for them.
 const V4_GUV = {
   umsatzerloese:                    ['UMSATZERLOESE'],
-  rohergebnis:                      ['ROHERGEBNIS'], // assumed name, not yet seen in a v4 filing
+  rohergebnis:                      ['ROHERGEBNIS'], // mittelgroße GmbH: replaces Umsatz … Material
   bestandsveraenderung:             ['VERAENDERUNG_DES_BESTANDS_AN_ERZEUGNISSEN_UND_LEISTUNGEN'],
   aktivierteEigenleistungen:        ['ANDERE_AKTIVIERTE_EIGENLEISTUNGEN'],
-  sonstigeBetrieblicheErtraege:     ['SONSTIGE_BETRIEBLICHE_ERTRAEGE'],
+  // Newer filings name the line after the presentation it sits in.
+  sonstigeBetrieblicheErtraege:     ['SONSTIGE_BETRIEBLICHE_ERTRAEGE', 'SONSTIGE_BETRIEBLICHE_ERTRAEGE_ZU_ROHERGEBNIS',
+                                     'SONSTIGE_BETRIEBLICHE_ERTRAEGE_ZU_UMSATZERLOESE'],
   materialaufwand:                  ['AUFWENDUNGEN_FUER_HERSTELLUNGSLEISTUNGEN', 'MATERIALAUFWAND'],
   personalaufwand:                  ['PERSONALAUFWAND'],
   abschreibungen:                   ['ABSCHREIBUNGEN'],
@@ -178,6 +196,7 @@ function extractV4Guv(guvRoot, mul, col) {
     guv[field] = sectionAmount(guvRoot, names, mul, col);
   }
   if (guv.betriebserfolg == null && guv.jahresueberschuss == null) return null;
+  normaliseGuvSigns(guv);
   guv.ebitda = ebitdaOf(guv);
   return guv;
 }
@@ -308,6 +327,7 @@ function extractBmfGuv(guvNode, mul, col) {
     guv[field] = node ? mul(bmfAmount(node, col)) : null;
   }
   if (guv.betriebserfolg == null && guv.jahresueberschuss == null) return null;
+  normaliseGuvSigns(guv);
   guv.ebitda = ebitdaOf(guv);
   return guv;
 }

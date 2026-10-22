@@ -140,6 +140,15 @@ Spanne:
    Leistungs- und Strukturerhebung)
 4. Umsatz-Claims von der Website (Phase 6), mit Datum
 
+**Auch Tier A braucht den Umsatz-Schätzer oft:** 13 von 14 mittelgroßen
+Vollform-Abschlüssen der Vorfilter-Stichprobe nennen nur das
+**Rohergebnis**, keinen Umsatz. Das EBITDA ist trotzdem exakt. Für die
+EBITDA-Marge ist der stärkste Input:
+
+5. Umsatz ≈ Rohergebnis / Rohertragsquote, Spanne je Cluster (z. B.
+   Großhandel A1 niedrig, technische Dienstleistung A2 hoch); kalibriert an
+   den großen Firmen, die beides ausweisen
+
 **EBITDA-Schätzer (Tier B):**
 
 ```
@@ -235,8 +244,9 @@ Entscheidungen.
    Firmen mit eingereichtem Jahresabschluss samt direkt ladbarem
    Dokument-`KEY` (kein SUCHEFIRMA/SUCHEURKUNDE nötig). Zusätzlich je Firma
    festhalten, ob Lagebericht (51), Bestätigungsvermerk (27) oder
-   Konzernabschluss (49) eingereicht wurden: das ist der Vorfilter für
-   mittelgroß/groß (Hypothese, siehe phase0 § 0.3). Neueintragungen und
+   Konzernabschluss (49) eingereicht wurden: das ist der **Vorfilter für
+   mittelgroß/groß** (bestätigt mit 20 von 20 Vollform-Abschlüssen, siehe
+   phase0 § 0.3). Neueintragungen und
    Löschungen kommen aus `VERAENDERUNGENFIRMA`. Idempotent, mit Checkpoint.
 4. Konzern-/Holding-Erkennung über die Bilanzstruktur (Finanzanlagen
    dominieren, kaum Personalaufwand, Kurzform trotz hoher Bilanzsumme):
