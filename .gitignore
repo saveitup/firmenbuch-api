@@ -14,3 +14,4 @@ logs/
 .claude/scheduled_tasks.lock
 data/staging-at-jab/
 data/staging-at-auszug/
+.claude/worktrees/
