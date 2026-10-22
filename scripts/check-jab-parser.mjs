@@ -29,7 +29,7 @@ const BASELINE_PATH = 'node_modules/.cache/kontur/jab-parser.head.mjs';
 
 // Fields the BMF-GuV change is allowed to fill in or correct.
 const EXPECTED_CHANGES = new Set(['umsatzerloese', 'betriebsergebnis', 'jahresergebnis']);
-const NEW_FIELDS = new Set(['guv', 'priorYear']);
+const NEW_FIELDS = new Set(['guv', 'priorYear', 'filing']);
 
 function loadBaseline() {
   mkdirSync(path.dirname(BASELINE_PATH), { recursive: true });

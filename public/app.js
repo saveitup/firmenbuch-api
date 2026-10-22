@@ -3,8 +3,12 @@
 // Hash shapes:
 //   #q=bank&c=CZ     → search (c optional)
 //   #co=AT:129377k   → detail view for a specific company
+//   #screen&band=kern&bl=Wien → investor screener (AT universe)
 //   ∅               → empty state with example chips
 const els = {
+  hero: document.querySelector('.hero'),
+  screener: document.getElementById('screener'),
+  navScreener: document.getElementById('nav-screener'),
   form: document.getElementById('search-form'),
   countrySelect: document.getElementById('country-select'),
   countryStrip: document.getElementById('country-strip'),
@@ -169,6 +173,10 @@ function renderExamples() {
 function parseHash() {
   const h = (location.hash || '').replace(/^#\/?/, '');
   if (!h) return { kind: 'home' };
+  if (h.split('&')[0] === 'screen') {
+    const filters = Object.fromEntries(new URLSearchParams(h.slice('screen'.length)));
+    return { kind: 'screen', filters };
+  }
   const params = new URLSearchParams(h.includes('=') ? h : '');
   if (params.has('co')) {
     const [cc, id] = params.get('co').split(':');
@@ -181,6 +189,11 @@ function parseHash() {
 }
 
 function setHash(spec) {
+  if (spec.kind === 'screen') {
+    const qs = new URLSearchParams(Object.entries(spec.filters || {}).filter(([, v]) => v)).toString();
+    location.hash = `screen${qs ? `&${qs}` : ''}`;
+    return;
+  }
   const p = new URLSearchParams();
   if (spec.kind === 'detail') p.set('co', `${spec.country}:${spec.id}`);
   else if (spec.q) { p.set('q', spec.q); if (spec.c) p.set('c', spec.c); }
@@ -192,6 +205,19 @@ function setHash(spec) {
 
 function onHashChange() {
   const state = parseHash();
+  // The screener is a full-width page of its own: no hero search above it.
+  const isScreen = state.kind === 'screen';
+  els.screener.hidden = !isScreen;
+  els.hero.hidden = isScreen;
+  els.navScreener.classList.toggle('active', isScreen);
+  if (isScreen) {
+    hideDetail();
+    els.emptyState.hidden = true;
+    els.results.hidden = true;
+    els.resultFacets.hidden = true;
+    renderScreener(state.filters);
+    return;
+  }
   if (state.kind === 'home') {
     hideDetail();
     els.results.innerHTML = '';
@@ -1030,6 +1056,203 @@ function renderDocuments(wrap, company, documents, hasParsedBalance) {
     li.appendChild(links);
     listEl.appendChild(li);
   }
+}
+
+// ─────────── Screener (AT universe, /api/screen) ───────────
+const SCREEN_BANDS = [
+  ['kern', 'Kern · EBITDA 1,5–5 Mio'],
+  ['erweitert', 'Erweitert · EBITDA 1–5 Mio'],
+  ['alle', 'Alle geladenen Firmen'],
+];
+const BUNDESLAENDER = ['Wien', 'Niederösterreich', 'Oberösterreich', 'Steiermark', 'Tirol', 'Kärnten', 'Salzburg', 'Vorarlberg', 'Burgenland'];
+const SCREEN_COLUMNS = [
+  // [sort key or null, label, title]
+  ['name', 'Firma', 'Firmenwortlaut · FN · Ort'],
+  [null, 'Bundesland', 'Sitz laut Firmenbuch'],
+  ['stichtag', 'GJ', 'Bilanzstichtag des letzten Abschlusses'],
+  ['umsatz', 'Umsatz', 'Umsatzerlöse; „R“ = nur Rohergebnis ausgewiesen (mittelgroße GmbH)'],
+  ['ebitda', 'EBITDA', 'Betriebserfolg + Abschreibungen, wie berichtet (nicht normalisiert)'],
+  ['wachstum', 'Δ VJ', 'EBITDA-Veränderung gegenüber dem Vorjahr'],
+  [null, 'Marge', 'EBITDA / Umsatz — nur wenn der Umsatz ausgewiesen ist'],
+  ['bilanzsumme', 'Bilanzsumme', ''],
+  ['ek_quote', 'EK-Quote', 'Eigenkapital / Bilanzsumme'],
+  [null, 'Organe', 'Geschäftsführung/Vorstand · Prokura (Kontext, kein Filter)'],
+];
+let screenTimer = null;
+// EBITDA decides the mandate band — "5 Mio." for 4,97 Mio. would mislead.
+const EUR_COMPACT_2 = new Intl.NumberFormat('de-AT', { notation: 'compact', compactDisplay: 'short', maximumFractionDigits: 2 });
+const fmtEur2 = (v) => (v == null || !Number.isFinite(v) ? '—' : `${EUR_COMPACT_2.format(v)} €`);
+
+function renderScreener(filters) {
+  const f = { band: 'kern', sort: 'ebitda', dir: 'desc', ...filters };
+  if (!els.screener.querySelector('.screener-bar')) buildScreenerShell();
+  const bar = els.screener.querySelector('.screener-bar');
+  bar.querySelector('[name=band]').value = f.band;
+  bar.querySelector('[name=bl]').value = f.bl || '';
+  bar.querySelector('[name=konzern]').value = f.konzern || '';
+  bar.querySelector('[name=rechtsform]').value = f.rechtsform || '';
+  const q = bar.querySelector('[name=q]');
+  if (document.activeElement !== q) q.value = f.q || '';
+  loadScreener(f);
+}
+
+function buildScreenerShell() {
+  els.screener.innerHTML = `
+    <header class="screener-head">
+      <div>
+        <h2 class="screener-title">Screener <span class="cg-code">AT</span></h2>
+        <p class="screener-meta" aria-live="polite"></p>
+      </div>
+      <a class="screener-export" href="#" download>CSV exportieren</a>
+    </header>
+    <form class="screener-bar" onsubmit="return false">
+      <label><span>EBITDA-Band</span><select name="band"></select></label>
+      <label><span>Bundesland</span><select name="bl"><option value="">Alle</option></select></label>
+      <label><span>Konzern</span><select name="konzern">
+        <option value="">Alle</option><option value="ohne">ohne Konzernabschluss</option><option value="nur">nur mit Konzernabschluss</option>
+      </select></label>
+      <label><span>Rechtsform</span><select name="rechtsform">
+        <option value="">übernahmefähig</option><option value="alle">alle</option>
+      </select></label>
+      <label class="screener-q"><span>Name</span><input name="q" type="search" placeholder="Firmenname filtern…" autocomplete="off" /></label>
+    </form>
+    <div class="screener-table-wrap">
+      <table class="fin-table screener-table">
+        <thead><tr></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p class="screener-note">
+      Quelle: Firmenbuch (JustizOnline IWG), Jahresabschlüsse und Kurzinformation — kein amtlicher Auszug.
+      Kennzahlen wie berichtet; EBITDA = Betriebserfolg + Abschreibungen, nicht normalisiert.
+      Geladen werden zuerst Firmen mit Lagebericht oder Bestätigungsvermerk (mittelgroß/groß).
+    </p>`;
+  const bar = els.screener.querySelector('.screener-bar');
+  for (const [v, label] of SCREEN_BANDS) bar.querySelector('[name=band]').add(new Option(label, v));
+  for (const bl of BUNDESLAENDER) bar.querySelector('[name=bl]').add(new Option(bl, bl));
+  bar.addEventListener('change', (e) => { if (e.target.name !== 'q') updateScreenHash(); });
+  bar.querySelector('[name=q]').addEventListener('input', () => {
+    clearTimeout(screenTimer);
+    screenTimer = setTimeout(updateScreenHash, 300);
+  });
+  const headRow = els.screener.querySelector('thead tr');
+  for (const [key, label, title] of SCREEN_COLUMNS) {
+    const th = document.createElement('th');
+    th.textContent = label;
+    if (title) th.title = title;
+    if (key) { th.dataset.sort = key; th.classList.add('sortable'); }
+    if (['umsatz', 'ebitda', 'wachstum', 'bilanzsumme', 'ek_quote'].includes(key) || label === 'Marge') th.classList.add('num');
+    headRow.appendChild(th);
+  }
+  headRow.addEventListener('click', (e) => {
+    const th = e.target.closest('th[data-sort]');
+    if (!th) return;
+    const cur = parseHash().filters || {};
+    const same = (cur.sort || 'ebitda') === th.dataset.sort;
+    const dir = same ? ((cur.dir || 'desc') === 'desc' ? 'asc' : 'desc') : (th.dataset.sort === 'name' ? 'asc' : 'desc');
+    setHash({ kind: 'screen', filters: { ...cur, sort: th.dataset.sort, dir } });
+  });
+  els.screener.querySelector('tbody').addEventListener('click', (e) => {
+    const tr = e.target.closest('tr[data-id]');
+    if (tr) setHash({ kind: 'detail', country: 'AT', id: tr.dataset.id });
+  });
+}
+
+function updateScreenHash() {
+  const bar = els.screener.querySelector('.screener-bar');
+  const cur = parseHash().filters || {};
+  setHash({
+    kind: 'screen',
+    filters: {
+      band: bar.querySelector('[name=band]').value,
+      bl: bar.querySelector('[name=bl]').value,
+      konzern: bar.querySelector('[name=konzern]').value,
+      rechtsform: bar.querySelector('[name=rechtsform]').value,
+      q: bar.querySelector('[name=q]').value.trim(),
+      sort: cur.sort, dir: cur.dir,
+    },
+  });
+}
+
+async function loadScreener(f) {
+  const params = new URLSearchParams({ band: f.band, sort: f.sort, dir: f.dir });
+  if (f.bl) params.set('bundesland', f.bl);
+  if (f.konzern) params.set('konzern', f.konzern);
+  if (f.rechtsform) params.set('rechtsform', f.rechtsform);
+  if (f.q) params.set('q', f.q);
+  els.screener.querySelector('.screener-export').href = `/api/screen.csv?${params}`;
+  for (const th of els.screener.querySelectorAll('th[data-sort]')) {
+    th.classList.toggle('sorted', th.dataset.sort === f.sort);
+    th.dataset.dir = th.dataset.sort === f.sort ? f.dir : '';
+  }
+  const meta = els.screener.querySelector('.screener-meta');
+  const tbody = els.screener.querySelector('tbody');
+  meta.textContent = 'Lade…';
+  try {
+    const res = await fetch(`/api/screen?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Screener nicht verfügbar');
+    const m = data.meta || {};
+    const nf = (n) => (n ?? 0).toLocaleString('de-AT');
+    meta.textContent = `${nf(data.total)} Firmen · geladen: ${nf(m.ingested)} von ${nf(m.prefilter)} Vorfilter-Firmen`
+      + ` · Universe: ${nf(m.universe)} Firmen mit Jahresabschluss${m.feedUntil ? ` · Feed bis ${formatDate(m.feedUntil)}` : ''}`;
+    tbody.innerHTML = '';
+    if (!data.rows.length) {
+      tbody.innerHTML = `<tr><td colspan="${SCREEN_COLUMNS.length}" class="screener-empty">Keine Firmen für diese Filter.</td></tr>`;
+      return;
+    }
+    for (const r of data.rows) tbody.appendChild(renderScreenRow(r));
+  } catch (err) {
+    meta.textContent = `Fehler: ${err.message}`;
+  }
+}
+
+function renderScreenRow(r) {
+  const tr = document.createElement('tr');
+  tr.dataset.id = r.id;
+  const cells = [
+    () => {
+      const td = document.createElement('td');
+      td.className = 'screener-firm';
+      td.innerHTML = '<span class="sf-name"></span><span class="sf-sub"></span>';
+      td.querySelector('.sf-name').textContent = r.name || r.id;
+      td.querySelector('.sf-sub').textContent = [`FN ${r.id}`, r.ort, r.rechtsform].filter(Boolean).join(' · ');
+      if (r.konzern) {
+        const b = document.createElement('span');
+        b.className = 'sf-badge';
+        b.textContent = 'Konzern';
+        b.title = 'Hat einen Konzernabschluss eingereicht';
+        td.querySelector('.sf-name').append(' ', b);
+      }
+      return td;
+    },
+    () => textCell(r.bundesland || '—'),
+    () => textCell((r.stichtag || '').slice(0, 4) || '—', 'yr'),
+    () => textCell(r.umsatz != null ? fmtEur(r.umsatz) : r.rohergebnis != null ? `R ${fmtEur(r.rohergebnis)}` : '—', 'num'),
+    () => textCell(fmtEur2(r.ebitda), 'num strong'),
+    () => {
+      const td = textCell(r.ebitda_wachstum != null ? `${r.ebitda_wachstum >= 0 ? '+' : ''}${(r.ebitda_wachstum * 100).toFixed(0)} %` : '—', 'num');
+      if (r.ebitda_wachstum != null) td.classList.add(r.ebitda_wachstum >= 0 ? 'up' : 'down');
+      return td;
+    },
+    () => textCell(r.umsatz ? fmtPct(r.ebitda / r.umsatz) : '—', 'num'),
+    () => textCell(fmtEur(r.bilanzsumme), 'num'),
+    () => textCell(fmtPct(r.ek_quote), 'num'),
+    () => {
+      const td = textCell([r.gfCount ? `${r.gfCount} GF` : null, r.prokuraCount ? `${r.prokuraCount} PR` : null].filter(Boolean).join(' · ') || '—');
+      if (r.aeltesterGfJahrgang) td.title = `Ältester GF/Vorstand: Jahrgang ${r.aeltesterGfJahrgang}`;
+      return td;
+    },
+  ];
+  for (const make of cells) tr.appendChild(make());
+  return tr;
+}
+
+function textCell(text, cls = '') {
+  const td = document.createElement('td');
+  if (cls) td.className = cls;
+  td.textContent = text;
+  return td;
 }
 
 function hideDetail() { els.detail.hidden = true; els.detail.innerHTML = ''; }

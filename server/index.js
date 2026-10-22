@@ -17,6 +17,7 @@ import { enrichWithGleif } from './adapters/gleif-enrich.js';
 import { computeHealthScore } from './analytics/health-score.js';
 import { computeRatios } from './analytics/ratios.js';
 import { LruCache } from './cache.js';
+import { screenAt, toCsv, EBITDA_BANDS } from './screen.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -175,6 +176,26 @@ app.get('/api/company/:country/:id', async (req, res) => {
     res.json({ company, people, financials, score, documents, stale: stale || undefined });
   } catch (err) {
     if (err instanceof AdapterError) return res.status(err.status).json({ error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Investor screener over the AT universe (server/screen.js).
+app.get('/api/screen', (req, res) => {
+  try {
+    res.json({ bands: EBITDA_BANDS, ...screenAt(req.query) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/screen.csv', (req, res) => {
+  try {
+    const { rows } = screenAt({ ...req.query, limit: 5000 });
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="kontur-screener-${new Date().toISOString().slice(0, 10)}.csv"`);
+    res.send(toCsv(rows));
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });

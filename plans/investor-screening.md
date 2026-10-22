@@ -226,7 +226,9 @@ Entscheidungen.
 
 ### Phase 1 — Universe & Stammdaten (AT)
 
-1. `at.js`: **AUSZUG_V2 mit `UMFANG = "Kurzinformation"`** implementieren
+1. ✅ `at.js`: **AUSZUG_V2 mit `UMFANG = "Kurzinformation"`** implementieren
+   (`getCompany`, neu `getPeople`, `getKurzinformation`; Bundesland aus der
+   Gemeindekennziffer)
    (`getCompany` liefert echte Stammdaten). Strukturiert gespeichert werden
    Sitz (PLZ → Bundesland), Geschäftszweig und Homepage (falls eingetragen),
    Ersterfassung, Rechtsform, Organe (GF/Vorstand/Prokura mit Beginn) und
@@ -286,7 +288,12 @@ Entscheidungen.
      kosten
    - BMF-Legacy bleibt für historische Jahre nötig (seit 1.3.2025 ist
      JAb 4.0 Pflicht)
-2. `scripts/at-jab-ingest.mjs`: XML-`KEY`s aus dem Universe laden, direkt
+2. ✅ `scripts/at-jab-ingest.mjs` (`npm run ingest:at-jab`): je Firma
+   Kurzinformation + neuester XML-Abschluss → `companies`,
+   `at_company_profile`, `financials_yearly`; Status in `at_jab_ingest`.
+   Roh-XML ohne eingebettete Anhänge gzip-komprimiert unter
+   `data/at-jab-xml/` (~5–8 KB je Firma). Ursprüngliche Spezifikation:
+   XML-`KEY`s aus dem Universe laden, direkt
    `upsertFinancials`. Reihenfolge nach Vorfilter: zuerst Firmen mit
    Lagebericht/Bestätigungsvermerk, dann der Rest, sofern 0.1 das erlaubt.
    PDF/OCR nur für Qualified-Kandidaten. Danach inkrementell: 1 Feed-Call

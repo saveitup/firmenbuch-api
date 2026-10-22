@@ -4,12 +4,14 @@
 // License:  IWG Nutzungsbedingungen — https://justizonline.gv.at/jop/web/iwg/terms
 //           (commercial use allowed; explicit "kein amtlicher Auszug"-hint required)
 //
-// Current scope (phase B/1): SUCHEFIRMA (search) only. getCompany() returns null
-// so the server falls back to the DB-cached record from a prior search. Full
-// AUSZUG_V2 (with correct UMFANG enum — not documented publicly) is a TODO.
+// Operations used: SUCHEFIRMA (search), AUSZUG_V2 with UMFANG "Kurzinformation"
+// (Stammdaten + organs; the only UMFANG our token accepts), SUCHEURKUNDE /
+// URKUNDE (Jahresabschlüsse), VERAENDERUNGENURKUNDE (change feed).
+// Service description: https://justizonline.gv.at/jop/api/at.gv.justiz.fbw/ws/fbw.wsdl
 import https from 'node:https';
 import { XMLParser } from 'fast-xml-parser';
 import { makeDTO, AdapterError } from './base.js';
+import { LruCache } from '../cache.js';
 import { parseJAb } from '../jab-parser.js';
 import { parsePdfBilanz, parseBilanzFromText } from '../pdf-bilanz-parser.js';
 import { ocrPdf, looksLikeScannedPdf } from '../pdf-ocr.js';
@@ -28,7 +30,17 @@ const parser = new XMLParser({
   trimValues: true,
 });
 
-function soapRequest(xml, { timeoutMs = TIMEOUT_MS } = {}) {
+// AUSZUG responses carry meaning in attributes (FUN@FKEN role code, @PNR
+// person link, @AUFRECHT current vs. deleted entry), so keep them.
+const attrParser = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: '@_',
+  removeNSPrefix: true,
+  parseTagValue: false,
+  trimValues: true,
+});
+
+function soapRequest(xml, { timeoutMs = TIMEOUT_MS, xmlParser = parser } = {}) {
   return new Promise((resolve, reject) => {
     const token = process.env.FIRMENBUCH_TOKEN;
     if (!token) return reject(new AdapterError('AT', 'FIRMENBUCH_TOKEN missing in .env', { status: 503 }));
@@ -53,7 +65,7 @@ function soapRequest(xml, { timeoutMs = TIMEOUT_MS } = {}) {
           if (res.statusCode < 200 || res.statusCode >= 300) {
             return reject(new AdapterError('AT', `HTTP ${res.statusCode}: ${raw.slice(0, 200)}`, { status: 502 }));
           }
-          const parsed = parser.parse(raw);
+          const parsed = xmlParser.parse(raw);
           const fault = parsed?.Envelope?.Body?.Fault;
           if (fault) {
             const msg = fault.Reason?.Text || fault.faultstring || JSON.stringify(fault);
@@ -145,6 +157,137 @@ export function fnCanonFromDigits(digits) {
 // ~6 MB for a peak-season week, far beyond the default lookup timeout.
 const FEED_TIMEOUT_MS = 180_000;
 
+// ─── AUSZUG_V2 "Kurzinformation" ─────────────────────────────────────────
+// The only UMFANG our IWG/HVD token accepts. It carries Stammdaten and the
+// representing organs (GF, Vorstand, Prokura) but no Gesellschafter.
+
+// First digit of the Gemeindekennziffer (FI_DKZ06/ORTNR/CODE) = Bundesland.
+const BUNDESLAND_BY_GKZ = {
+  1: 'Burgenland', 2: 'Kärnten', 3: 'Niederösterreich', 4: 'Oberösterreich', 5: 'Salzburg',
+  6: 'Steiermark', 7: 'Tirol', 8: 'Vorarlberg', 9: 'Wien',
+};
+
+const asList = (x) => (Array.isArray(x) ? x : x ? [x] : []);
+// Kurzinformation lists current entries; skip any flagged as no longer valid.
+const current = (x) => asList(x).filter((e) => e?.['@_AUFRECHT'] !== 'false');
+const ymd = (s) => (/^\d{8}$/.test(String(s || '')) ? `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}` : s || null);
+const lines = (x) => asList(x).map(String).join(' ').trim();
+
+function buildAuszugEnvelope(fnr, stichtag) {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"
+  xmlns:a="ns://firmenbuch.justiz.gv.at/Abfrage/v2/AuszugRequest">
+  <soap:Header/>
+  <soap:Body>
+    <a:AUSZUG_V2_REQUEST>
+      <a:FNR>${xmlEscape(fnr)}</a:FNR>
+      <a:STICHTAG>${stichtag}</a:STICHTAG>
+      <a:UMFANG>Kurzinformation</a:UMFANG>
+    </a:AUSZUG_V2_REQUEST>
+  </soap:Body>
+</soap:Envelope>`;
+}
+
+function parseKurzinformation(resp) {
+  const fi = resp?.FIRMA;
+  if (!fi) return null;
+  const adr = current(fi.FI_DKZ03)[0] || {};
+  const sitz = current(fi.FI_DKZ06)[0] || {};
+  const gkz = sitz.ORTNR?.CODE ? String(sitz.ORTNR.CODE) : null;
+  const form = current(fi.FI_DKZ07)[0]?.RECHTSFORM || {};
+  const reg = current(fi.FI_DKZ09)[0] || {};
+  const persons = new Map(asList(resp.PER).map((p) => [p['@_PNR'], p]));
+  const organe = asList(resp.FUN).map((fu) => {
+    const per = persons.get(fu['@_PNR']) || {};
+    const natural = current(per.PE_DKZ02)[0] || {};
+    const legal = current(per.PE_DKZ09)[0] || {};
+    const since = current(fu.FU_DKZ10)[0] || {};
+    return {
+      roleCode: fu['@_FKEN'] || null,
+      role: fu['@_FKENTEXT'] || null,
+      name: natural.NAME_FORMATIERT || lines(natural.BEZEICHNUNG) || null,
+      geburtsjahr: natural.GEBURTSDATUM ? Number(String(natural.GEBURTSDATUM).slice(0, 4)) : null,
+      firmenbuchnummer: legal.PE_FNR || null,
+      seit: ymd(since.DATVON),
+      vertretung: since.VART?.TEXT || null,
+    };
+  });
+  return {
+    fnr: resp['@_FNR'] || null,
+    legalName: lines(current(fi.FI_DKZ02)[0]?.BEZEICHNUNG),
+    address: {
+      strasse: adr.STRASSE || null, hausnummer: adr.HAUSNUMMER || null,
+      stiege: adr.STIEGE || null, tuer: adr.TUERNUMMER || null,
+      plz: adr.PLZ || null, ort: adr.ORT || null, staat: adr.STAAT || null,
+    },
+    sitz: sitz.SITZ || null,
+    gemeindekennziffer: gkz,
+    bundesland: gkz ? BUNDESLAND_BY_GKZ[gkz[0]] || null : null,
+    legalFormCode: form.CODE || null,
+    legalFormText: form.TEXT || null,
+    gericht: reg.HGALT?.TEXT || null,
+    registereintrag: reg.HRAHRB || null,
+    ersterfassung: ymd(reg.DATERST),
+    geschaeftszweig: current(fi.FI_DKZ05).map((x) => lines(x.TEXT)).filter(Boolean).join(' · ') || null,
+    homepage: current(fi.FI_DKZ25)[0]?.HOMEPAGE || null,
+    rechtstatsachen: asList(fi.RECHTSTATSACHE).flatMap((r) => current(r.RTS_DKZ50)).map((r) => ({
+      code: r.CODE || null, datum: r.DATUM_VOM || null, text: r.TEXT || null,
+    })),
+    organe,
+  };
+}
+
+function formatAddress(a) {
+  const street = [a.strasse, a.hausnummer].filter(Boolean).join(' ');
+  const extra = [a.stiege && `Stiege ${a.stiege}`, a.tuer && `Tür ${a.tuer}`].filter(Boolean).join('/');
+  const town = [a.plz, a.ort].filter(Boolean).join(' ');
+  return [[street, extra].filter(Boolean).join(' '), town].filter(Boolean).join(', ') || null;
+}
+
+function kurzinfoToDTO(k, canon) {
+  return makeDTO('AT', {
+    nationalId: canon,
+    legalName: k.legalName,
+    legalFormCode: k.legalFormCode,
+    legalFormText: k.legalFormText,
+    status: 'active',
+    address: formatAddress(k.address),
+    incorporationDate: k.ersterfassung,
+    website: k.homepage || undefined,
+    flags: /\b(?:iL|i\.L\.?|in\s+Liqu)/i.test(k.legalName || '') ? { bankrupt: false, inLiquidation: true } : undefined,
+    source: 'at',
+    raw: { kurzinformation: k },
+  });
+}
+
+// getCompany and getPeople both need the same extract; the detail view asks
+// for them in parallel, so share one in-flight request per FN for a while.
+const kurzinfoCache = new LruCache({ max: 500, ttlMs: 10 * 60 * 1000 });
+
+async function fetchKurzinformation(canon) {
+  const fnr = canon.replace(/^0+/, '');
+  const body = await soapRequest(buildAuszugEnvelope(fnr, new Date().toISOString().slice(0, 10)), { xmlParser: attrParser });
+  return parseKurzinformation(body?.AUSZUG_V2_RESPONSE);
+}
+
+function getKurzinformationCached(canon) {
+  let pending = kurzinfoCache.get(canon);
+  if (!pending) {
+    pending = fetchKurzinformation(canon);
+    kurzinfoCache.set(canon, pending);
+    // A failed lookup must not stay cached.
+    pending.catch(() => kurzinfoCache.set(canon, undefined, 0));
+  }
+  return pending;
+}
+
+// Accepts "107110s", "107110 s", "FN 6933x", "6933" → "107110s" / "006933x".
+// The check letter is always recomputed from the digits.
+function canonFnr(id) {
+  const m = String(id || '').toLowerCase().replace(/\s+/g, '').replace(/^fn/, '').match(/^(\d{1,6})[a-z]?$/);
+  return m ? fnCanonFromDigits(m[1]) : null;
+}
+
 function buildDocumentChangesEnvelope(von, bis) {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"
@@ -179,21 +322,38 @@ export default {
     return list.map(hitToDTO).filter(Boolean);
   },
 
-  // For now: no live detail fetch. If a company has been seen via search,
-  // the server serves it from the DB cache. If not, we do a narrow exact-name
-  // search with the given id as the search term, which also works for FN-like
-  // inputs because the IWG SUCHEFIRMA endpoint handles them.
+  // Stammdaten from the AUSZUG_V2 Kurzinformation (street address, Sitz,
+  // Rechtsform, Homepage). Falls back to a targeted SUCHEFIRMA — which has no
+  // FNR filter, so we match client-side — if the extract fails.
   async getCompany(id) {
-    const key = String(id || '').trim();
-    if (!key) return null;
-    // If the id looks like an FNR, attempt a targeted search — the response
-    // has no FNR filter so we filter client-side.
-    if (FNR_LIKE.test(key.replace(/\s+/g, ''))) {
-      const hits = await this.search(key);
-      const match = hits.find((h) => h.nationalIdCanon === key.toLowerCase().replace(/\s+/g, ''));
-      return match || null;
+    const canon = canonFnr(id);
+    if (!canon) return null;
+    try {
+      const k = await getKurzinformationCached(canon);
+      if (k?.legalName) return kurzinfoToDTO(k, canon);
+    } catch { /* fall back to search */ }
+    const hits = await this.search(canon);
+    return hits.find((h) => h.nationalIdCanon === canon) || null;
+  },
+
+  // Representing organs (GF, Vorstand, Prokura) from the same extract.
+  // Gesellschafter are not part of the Kurzinformation.
+  async getPeople(id) {
+    const canon = canonFnr(id);
+    if (!canon) return [];
+    try {
+      const k = await getKurzinformationCached(canon);
+      return (k?.organe || []).map((o) => ({ role: o.role, roleCode: o.roleCode, name: o.name, since: o.seit }));
+    } catch {
+      return [];
     }
-    return null;
+  },
+
+  // Parsed Kurzinformation incl. Bundesland, Geschäftszweig and organs with
+  // Geburtsjahr. Used by scripts/at-jab-ingest.mjs.
+  async getKurzinformation(id) {
+    const canon = canonFnr(id);
+    return canon ? getKurzinformationCached(canon) : null;
   },
 
   // Fetch recent JAb filings via SUCHEURKUNDE, then URKUNDE-download each XML

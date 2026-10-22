@@ -128,12 +128,22 @@ export function parseJAb(xmlText) {
   const priorStichtag = ag.GESCHAEFTSJAHR_VORANGEGANGEN?.ENDE || null;
   const prior = priorStichtag ? v4Year(envelope, mulVj, 'BETRAG_VJ') : null;
 
+  const firma = ag.FIRMENDATEN || {};
+  const wortlaut = firma.FIRMENWORTLAUT?.ZEILE;
   return {
     stichtag,
     currency: 'EUR',
     ...v4Year(envelope, mul, 'BETRAG_GJ'),
     arbeitnehmer: null,
     priorYear: prior?.bilanzsumme != null ? { stichtag: priorStichtag, ...prior } : null,
+    filing: {
+      format: 'v4',
+      fnr: firma.FIRMENBUCHNUMMER || null,
+      firmenwortlaut: (Array.isArray(wortlaut) ? wortlaut.join(' ') : wortlaut) || null,
+      rechtsform: gj.RECHTSFORM || null,
+      groessenklasse: gj.GROESSENKLASSE || null,                    // K / M / G
+      formular: ag.JAHRESABSCHLUSS_KONZERNABSCHLUSS || null,        // JAB, JAB-ANLAGE12, …
+    },
   };
 }
 
@@ -352,12 +362,21 @@ function parseBmfLegacy(xmlText) {
   const priorStichtag = allg.VOR_GJ?.ENDE || null;
   const prior = priorStichtag ? bmfYear(gl, (x) => x == null ? null : x * vjScale, 'BETRAG_VJ') : null;
 
+  const name = allg.FIRMA?.F_NAME?.Z;
   return {
     stichtag,
     currency: env.BILANZ_GLIEDERUNG?.ALLG_JUSTIZ?.WAEHRUNG || 'EUR',
     ...bmfYear(gl, (x) => x, 'BETRAG'),
     arbeitnehmer: null,
     priorYear: prior?.bilanzsumme != null ? { stichtag: priorStichtag, ...prior } : null,
+    filing: {
+      format: 'bmf',
+      fnr: allg.FIRMA?.FNR || null,
+      firmenwortlaut: (Array.isArray(name) ? name.join(' ') : name) || null,
+      rechtsform: gj.FORM || null,
+      groessenklasse: null,                                         // not stated; see formular
+      formular: allg.JABFORM?.HGBFORM || null,                      // JAB (full form) / UGB23 (small form)
+    },
   };
 }
 

@@ -137,3 +137,30 @@ SELECT
 FROM at_register_documents d
 GROUP BY d.national_id_canon
 HAVING SUM(d.doc_code IN ('48', '137', '164')) > 0;
+
+-- Screening profile from the AUSZUG Kurzinformation (one row per firm).
+-- Filled by scripts/at-jab-ingest.mjs; the street address itself lives in
+-- companies.address.
+CREATE TABLE IF NOT EXISTS at_company_profile (
+  national_id_canon  TEXT PRIMARY KEY,
+  plz                TEXT,
+  ort                TEXT,
+  bundesland         TEXT,                             -- from the Gemeindekennziffer of the Sitz
+  gemeindekennziffer TEXT,
+  geschaeftszweig    TEXT,
+  homepage           TEXT,
+  rechtsform         TEXT,
+  ersterfassung      TEXT,
+  organe_json        TEXT,                             -- [{roleCode, role, name, geburtsjahr, seit, vertretung}]
+  updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_atprofile_bundesland ON at_company_profile(bundesland);
+
+-- One row per Jahresabschluss document the ingest has processed.
+CREATE TABLE IF NOT EXISTS at_jab_ingest (
+  doc_key            TEXT PRIMARY KEY,
+  national_id_canon  TEXT NOT NULL,
+  status             TEXT NOT NULL,                    -- ok | no-data | error
+  error              TEXT,
+  ingested_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
