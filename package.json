@@ -13,6 +13,7 @@
     "prewarm:fr": "node --env-file=.env scripts/prewarm-fr.mjs",
     "ingest:fr-sftp": "node --env-file=.env.local scripts/ingest-fr-sftp.mjs",
     "ingest:uk-bulk": "node scripts/ingest-uk-bulk.mjs",
+    "ingest:at-universe": "node --env-file=.env scripts/at-universe.mjs",
     "eval:new": "node --env-file-if-exists=.env scripts/eval-new-adapters.mjs",
     "check:jab": "node scripts/check-jab-parser.mjs && node scripts/check-financials-store.mjs"
   },

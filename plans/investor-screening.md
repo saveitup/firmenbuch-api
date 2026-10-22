@@ -239,7 +239,13 @@ Entscheidungen.
    Nachfolger). **Eigentümerstruktur** (Gesellschafter-GF, Anteile,
    Holding-Kette) nur für Priority-Kandidaten über einen kostenpflichtigen
    vollen Auszug, sonst UNKNOWN.
-3. `scripts/at-universe.mjs`: `VERAENDERUNGENURKUNDE` rückwärts über
+3. ✅ `scripts/at-universe.mjs` (`npm run ingest:at-universe`), Tabellen
+   `at_register_documents` / `at_feed_windows`, View `at_universe`.
+   Die FN-Prüfbuchstaben werden aus dem `KEY` berechnet (gewichtete
+   Ziffernsumme mod 17, Gewichte 6·4·14·15·10·1, Buchstaben
+   `abdfghikmpstvwxyz`; stimmt bei allen 3 156 FN der DB). Damit lassen sich
+   Feed-Einträge ohne Einzelabfrage mit `companies`/`financials_yearly`
+   verknüpfen. Ursprüngliche Spezifikation: `VERAENDERUNGENURKUNDE` rückwärts über
    ≈ 24 Monate in **Wochenfenstern** (~104 Calls, ~45 min). Ergebnis: alle
    Firmen mit eingereichtem Jahresabschluss samt direkt ladbarem
    Dokument-`KEY` (kein SUCHEFIRMA/SUCHEURKUNDE nötig). Zusätzlich je Firma

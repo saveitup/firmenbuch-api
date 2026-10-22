@@ -28,7 +28,7 @@ const parser = new XMLParser({
   trimValues: true,
 });
 
-function soapRequest(xml) {
+function soapRequest(xml, { timeoutMs = TIMEOUT_MS } = {}) {
   return new Promise((resolve, reject) => {
     const token = process.env.FIRMENBUCH_TOKEN;
     if (!token) return reject(new AdapterError('AT', 'FIRMENBUCH_TOKEN missing in .env', { status: 503 }));
@@ -43,7 +43,7 @@ function soapRequest(xml) {
           'User-Agent': UA,
           Accept: 'application/soap+xml',
         },
-        timeout: TIMEOUT_MS,
+        timeout: timeoutMs,
       },
       (res) => {
         const chunks = [];
@@ -127,6 +127,37 @@ function hitToDTO(e) {
 }
 
 const FNR_LIKE = /^\d{1,6}[a-z]?$/i;
+
+// FN check letter: weighted digit sum mod 17 over the zero-padded 6-digit
+// number. Weights fitted on (and matching) all 3 156 FNs in the local DB.
+const FN_WEIGHTS = [6, 4, 14, 15, 10, 1];
+const FN_LETTERS = 'abdfghikmpstvwxyz';
+
+/** "6933" or "006933" → "006933x" (the national_id_canon used for AT). */
+export function fnCanonFromDigits(digits) {
+  const d = String(digits).padStart(6, '0');
+  if (!/^\d{6}$/.test(d)) return null;
+  const sum = [...d].reduce((s, c, i) => s + Number(c) * FN_WEIGHTS[i], 0);
+  return d + FN_LETTERS[sum % 17];
+}
+
+// The change feed carries ~16 s fixed server cost per call and returns up to
+// ~6 MB for a peak-season week, far beyond the default lookup timeout.
+const FEED_TIMEOUT_MS = 180_000;
+
+function buildDocumentChangesEnvelope(von, bis) {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"
+  xmlns:v="ns://firmenbuch.justiz.gv.at/Abfrage/VeraenderungenUrkundeRequest">
+  <soap:Header/>
+  <soap:Body>
+    <v:VERAENDERUNGENURKUNDEREQUEST>
+      <v:VON>${von}</v:VON>
+      <v:BIS>${bis}</v:BIS>
+    </v:VERAENDERUNGENURKUNDEREQUEST>
+  </soap:Body>
+</soap:Envelope>`;
+}
 
 export default {
   id: 'AT',
@@ -213,6 +244,25 @@ export default {
   // On-demand fetch of a single Urkunde by its document KEY. Returns the raw
   // decoded bytes plus the original content-type. Used by the /document proxy.
   async downloadDocument(key) { return downloadDocumentRaw(key); },
+
+  // VERAENDERUNGENURKUNDE: every document added to the Urkundensammlung
+  // between `von` and `bis` (YYYY-MM-DD, inclusive). Metadata only — the KEY
+  // can be passed to downloadDocument(). Used by scripts/at-universe.mjs.
+  async getDocumentChanges(von, bis) {
+    const body = await soapRequest(buildDocumentChangesEnvelope(von, bis), { timeoutMs: FEED_TIMEOUT_MS });
+    const list = body?.VERAENDERUNGENURKUNDERESPONSE?.VERAENDERUNG;
+    const entries = Array.isArray(list) ? list : list ? [list] : [];
+    return entries
+      .filter((e) => e?.KEY)
+      .map((e) => ({
+        key: String(e.KEY),
+        nationalIdCanon: fnCanonFromDigits(String(e.KEY).split('_')[0]),
+        docCode: e.DOKUMENTART?.CODE != null ? String(e.DOKUMENTART.CODE) : null,
+        docText: e.DOKUMENTART?.TEXT || null,
+        vollzugsdatum: e.VOLLZUGSDATUM,
+        contentType: e.CONTENTTYPE || null,
+      }));
+  },
 };
 
 // Attempt to parse a single PDF candidate. Returns a balance-sheet row or

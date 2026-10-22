@@ -85,3 +85,55 @@ CREATE TABLE IF NOT EXISTS watchlist_entries (
   UNIQUE (owner_key, country, national_id_canon)
 );
 CREATE INDEX IF NOT EXISTS idx_watch_owner ON watchlist_entries(owner_key);
+
+-- ─────────── AT Urkunden-Feed (screening universe) ───────────
+-- One row per document JustizOnline announces via VERAENDERUNGENURKUNDE.
+-- Metadata only; filled by scripts/at-universe.mjs. Rows are not tied to
+-- `companies` (most firms are never looked up individually).
+CREATE TABLE IF NOT EXISTS at_register_documents (
+  doc_key            TEXT PRIMARY KEY,                 -- URKUNDE key, e.g. 006933_0070732451287_000___000_30_34091871_XML
+  national_id_canon  TEXT NOT NULL,                    -- FN incl. check letter, derived from the key
+  doc_code           TEXT,                             -- DOKUMENTART: 48 JAb, 137 berichtigt, 164 vorläufig, 51 Lagebericht, 27 Bestätigungsvermerk, 49 Konzernabschluss, 136 Liquidationsschlussbilanz
+  doc_text           TEXT,
+  vollzugsdatum      TEXT NOT NULL,
+  content_type       TEXT,
+  first_seen_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_atdoc_company ON at_register_documents(national_id_canon, doc_code, vollzugsdatum);
+CREATE INDEX IF NOT EXISTS idx_atdoc_date    ON at_register_documents(vollzugsdatum);
+
+-- Feed windows already fetched — the backfill checkpoint.
+CREATE TABLE IF NOT EXISTS at_feed_windows (
+  feed        TEXT NOT NULL,                           -- 'urkunde'
+  von         TEXT NOT NULL,
+  bis         TEXT NOT NULL,
+  entries     INTEGER NOT NULL,
+  complete    INTEGER NOT NULL,                        -- 1 = window lies fully in the past, never refetched
+  fetched_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (feed, von, bis)
+);
+
+-- Screening universe: one row per firm that filed a Jahresabschluss in the
+-- fetched period. A Lagebericht or Bestätigungsvermerk marks mittelgroß/groß
+-- (full form with GuV — 20/20 in the phase-0 check). Recreated on every
+-- migrate so definition changes apply.
+DROP VIEW IF EXISTS at_universe;
+CREATE VIEW at_universe AS
+SELECT
+  d.national_id_canon,
+  MAX(CASE WHEN d.doc_code IN ('48', '137') THEN d.vollzugsdatum END) AS last_jab_at,
+  COUNT(DISTINCT CASE WHEN d.doc_code IN ('48', '137') THEN d.vollzugsdatum END) AS jab_filing_days,
+  (SELECT x.doc_key FROM at_register_documents x
+    WHERE x.national_id_canon = d.national_id_canon AND x.doc_code IN ('48', '137')
+      AND x.content_type LIKE '%xml%'
+    ORDER BY x.vollzugsdatum DESC, x.doc_key DESC LIMIT 1)            AS latest_jab_xml_key,
+  MAX(d.doc_code IN ('51', '27'))                                     AS prefilter_mittel_gross,
+  MAX(d.doc_code = '51')                                              AS has_lagebericht,
+  MAX(d.doc_code = '27')                                              AS has_bestaetigungsvermerk,
+  MAX(d.doc_code = '49')                                              AS has_konzernabschluss,
+  MAX(d.doc_code = '137')                                             AS has_berichtigt,
+  MAX(d.doc_code = '164')                                             AS has_vorlaeufig,
+  MAX(d.doc_code = '136')                                             AS has_liquidationsschlussbilanz
+FROM at_register_documents d
+GROUP BY d.national_id_canon
+HAVING SUM(d.doc_code IN ('48', '137', '164')) > 0;
