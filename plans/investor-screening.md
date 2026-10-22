@@ -264,6 +264,21 @@ Entscheidungen.
 
 **Exit:** ≥ 95 % des Kalibrierungssets im Universe; Stammdaten ≥ 90 % befüllt.
 
+**Stand 22.10.2026 (Phase 1 + Vorfilter-Ingest):**
+- **Universe:** Feed Okt. 2024 – Okt. 2026, 902 250 Dokumente,
+  **217 749 Firmen** mit Jahresabschluss (98,6 % davon mit XML)
+- Vorfilter mittelgroß/groß: 8 389; Konzernabschluss: 1 071;
+  Liquidationsschlussbilanz: 466
+- **Geladen:** 8 181 Vorfilter-Firmen mit Kurzinformation und neuestem
+  Abschluss; 2 Verbindungsabbrüche, im zweiten Lauf nachgeholt
+- **Screener:**
+  - 2 101 Firmen im Kernband (EBITDA 1,5–5 Mio.), 2 768 im erweiterten Band
+  - nur 748 der 2 101 weisen einen Umsatz aus, 1 353 nur das Rohergebnis
+  - von den 748 mit Umsatz haben 106 eine EBITDA-Marge ≥ 15 %
+- **Nebenbefund:** BMF-Abschlüsse betten Anhang und **Lagebericht als PDF**
+  ein. Sie werden im gespeicherten XML entfernt (80 MB statt 784 MB), sind
+  für Phase 6 aber eine direkte Quelle, bei Bedarf neu laden.
+
 ### Phase 2 — Finanzdaten in die Tiefe
 
 1. `jab-parser.js` **erweitern, nicht umbauen** (Mapping in

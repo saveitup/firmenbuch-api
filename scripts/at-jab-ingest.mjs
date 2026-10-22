@@ -13,11 +13,12 @@
 //   npm run ingest:at-jab -- --limit=20
 //   npm run ingest:at-jab -- --scope=all          # every firm in the universe
 //   npm run ingest:at-jab -- --retry-errors
+//   npm run ingest:at-jab -- --restrip            # re-strip stored XMLs, no IWG calls
 //
 // Run scripts/at-universe.mjs first. Idempotent: processed documents are
 // recorded in at_jab_ingest and skipped on re-runs.
 
-import { existsSync, mkdirSync, appendFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, appendFileSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { migrate, getDb } from '../server/db/index.js';
@@ -47,18 +48,48 @@ function log(line) {
 }
 
 // Scan instead of a regex — a single 7 MB text node overflows the regex stack.
+// Attachments come either as plain text nodes (v4) or as CDATA sections
+// (BMF: Anhang and Lagebericht as base64 PDF under VERMERKE).
+const removed = (n) => `[kontur: ${n} Zeichen entfernt]`;
 function stripLargeText(xml) {
   const out = [];
   for (let i = 0; i < xml.length;) {
     const lt = xml.indexOf('<', i);
     const text = xml.slice(i, lt === -1 ? xml.length : lt);
-    out.push(text.length > MAX_TEXT_NODE ? `[kontur: ${text.length} Zeichen entfernt]` : text);
+    out.push(text.length > MAX_TEXT_NODE ? removed(text.length) : text);
     if (lt === -1) break;
+    if (xml.startsWith('<![CDATA[', lt)) {
+      const end = xml.indexOf(']]>', lt);
+      const stop = end === -1 ? xml.length : end + 3;
+      out.push(stop - lt > MAX_TEXT_NODE ? `<![CDATA[${removed(stop - lt)}]]>` : xml.slice(lt, stop));
+      i = stop;
+      continue;
+    }
     const gt = xml.indexOf('>', lt);
+    if (gt === -1) { out.push(xml.slice(lt)); break; }
     out.push(xml.slice(lt, gt + 1));
     i = gt + 1;
   }
   return out.join('');
+}
+
+// `--restrip`: re-apply stripLargeText to the stored copies (no IWG calls).
+if (args.restrip) {
+  let before = 0, after = 0, changed = 0;
+  for (const f of readdirSync(RAW_DIR).filter((x) => x.endsWith('.xml.gz'))) {
+    const file = path.join(RAW_DIR, f);
+    const gz = readFileSync(file);
+    const xml = zlib.gunzipSync(gz).toString('utf8');
+    const stripped = stripLargeText(xml);
+    before += gz.length;
+    if (stripped.length === xml.length) { after += gz.length; continue; }
+    const out = zlib.gzipSync(stripped);
+    writeFileSync(file, out);
+    after += out.length;
+    changed++;
+  }
+  log(`restrip: ${changed} Dateien gekürzt, ${(before / 1048576).toFixed(0)} MB → ${(after / 1048576).toFixed(0)} MB`);
+  process.exit(0);
 }
 
 // ─── Main ───────────────────────────────────────────────────────────────
