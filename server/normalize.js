@@ -109,16 +109,23 @@ function safeParse(s) {
  * the adapter getFinancials() output (see server/adapters/base DTO docs).
  * Called after a fresh adapter.getFinancials() — cached rows accumulate a
  * time series over repeat calls.
+ *
+ * A row may carry a `priorYear` (AT JAb: the filing's Vorjahr column). It is
+ * inserted only where that year is still missing — the firm's own filing for
+ * the year stays authoritative, since later filings can restate the prior
+ * year. Such rows get a "#VJ" source_ref suffix, and a later upsert of the
+ * original filing replaces them.
  */
 export function upsertFinancials(country, nationalIdCanon, rows) {
   if (!Array.isArray(rows) || !rows.length) return 0;
   const db = getDb();
-  const stmt = db.prepare(`
-    INSERT INTO financials_yearly (
+  const columns = `
       country, national_id_canon, stichtag, source_ref, currency,
       umsatzerloese, bilanzsumme, eigenkapital, jahresergebnis,
-      betriebsergebnis, arbeitnehmer, ek_quote, balance_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      betriebsergebnis, arbeitnehmer, ek_quote, balance_json, guv_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+  const stmt = db.prepare(`
+    INSERT INTO financials_yearly (${columns}
     ON CONFLICT(country, national_id_canon, stichtag) DO UPDATE SET
       source_ref       = excluded.source_ref,
       currency         = excluded.currency,
@@ -130,19 +137,30 @@ export function upsertFinancials(country, nationalIdCanon, rows) {
       arbeitnehmer     = excluded.arbeitnehmer,
       ek_quote         = excluded.ek_quote,
       balance_json     = COALESCE(excluded.balance_json, financials_yearly.balance_json),
+      guv_json         = COALESCE(excluded.guv_json, financials_yearly.guv_json),
       computed_at      = datetime('now')
   `);
+  const insertPrior = db.prepare(`
+    INSERT INTO financials_yearly (${columns}
+    ON CONFLICT(country, national_id_canon, stichtag) DO NOTHING
+  `);
+  const values = (r, sourceRef) => [
+    country, nationalIdCanon, r.stichtag,
+    sourceRef, r.currency || null,
+    r.umsatzerloese ?? null, r.bilanzsumme ?? null,
+    r.eigenkapital ?? null, r.jahresergebnis ?? null,
+    r.betriebsergebnis ?? null, r.arbeitnehmer ?? null,
+    r.ek_quote ?? null,
+    r.balanceSheet ? JSON.stringify(r.balanceSheet) : null,
+    r.guv ? JSON.stringify(r.guv) : null,
+  ];
   const tx = db.transaction((batch) => {
+    for (const r of batch) stmt.run(...values(r, r.source_ref || null));
+    // Prior years go last, so a year filed in this same batch always wins.
     for (const r of batch) {
-      stmt.run(
-        country, nationalIdCanon, r.stichtag,
-        r.source_ref || null, r.currency || null,
-        r.umsatzerloese ?? null, r.bilanzsumme ?? null,
-        r.eigenkapital ?? null, r.jahresergebnis ?? null,
-        r.betriebsergebnis ?? null, r.arbeitnehmer ?? null,
-        r.ek_quote ?? null,
-        r.balanceSheet ? JSON.stringify(r.balanceSheet) : null,
-      );
+      if (!r.priorYear?.stichtag) continue;
+      const prior = { currency: r.currency, ...r.priorYear };
+      insertPrior.run(...values(prior, r.source_ref ? `${r.source_ref}#VJ` : null));
     }
   });
   tx(rows);
@@ -174,7 +192,8 @@ export function writeOcrText(country, documentKey, ocrText) {
 export function readFinancials(country, nationalIdCanon) {
   const rows = getDb().prepare(`
     SELECT stichtag, currency, umsatzerloese, bilanzsumme, eigenkapital,
-           jahresergebnis, betriebsergebnis, arbeitnehmer, ek_quote, balance_json
+           jahresergebnis, betriebsergebnis, arbeitnehmer, ek_quote, balance_json,
+           guv_json
     FROM financials_yearly
     WHERE country = ? AND national_id_canon = ?
     ORDER BY stichtag ASC
@@ -183,7 +202,11 @@ export function readFinancials(country, nationalIdCanon) {
     if (r.balance_json) {
       try { r.balanceSheet = JSON.parse(r.balance_json); } catch {}
     }
+    if (r.guv_json) {
+      try { r.guv = JSON.parse(r.guv_json); } catch {}
+    }
     delete r.balance_json;
+    delete r.guv_json;
   }
   return rows;
 }

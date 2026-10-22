@@ -10,7 +10,9 @@
 //
 // Returns a normalised row suitable for `financials_yearly` inserts, with
 // a `balanceSheet` object carrying the full Aktiva/Passiva breakdown for
-// the Bilanz/Kennzahlen view.
+// the Bilanz/Kennzahlen view, a `guv` object with the GuV line items (null
+// for balance-sheet-only filings) and a `priorYear` row of the same shape
+// built from the filing's Vorjahr column.
 
 import { XMLParser } from 'fast-xml-parser';
 
@@ -24,12 +26,13 @@ const parser = new XMLParser({
 
 const SCALE = { E: 1, TE: 1000, ME: 1_000_000 };
 
-function topBetrag(section) {
+// `col` picks the column: BETRAG_GJ (current year) or BETRAG_VJ (prior year).
+function topBetrag(section, col = 'BETRAG_GJ') {
   if (!section) return null;
   const posten = section.POSTENZEILE;
   const first = Array.isArray(posten) ? posten[0] : posten;
   if (!first) return null;
-  const raw = first.BETRAG_GJ;
+  const raw = first[col];
   if (raw == null || raw === '') return null;
   const n = Number(raw);
   return Number.isFinite(n) ? n : null;
@@ -59,9 +62,17 @@ function walkAny(root, names) {
   return null;
 }
 
-function sectionAmount(root, names, mul) {
+function sectionAmount(root, names, mul, col = 'BETRAG_GJ') {
   const node = walkAny(root, names);
-  return node ? mul(topBetrag(node)) : null;
+  return node ? mul(topBetrag(node, col)) : null;
+}
+
+// EBITDA = Betriebserfolg + Abschreibungen. Abschreibungen are an expense
+// whatever sign the filing software used, so add back the absolute value.
+function ebitdaOf(guv) {
+  return (guv.betriebserfolg != null && guv.abschreibungen != null)
+    ? guv.betriebserfolg + Math.abs(guv.abschreibungen)
+    : null;
 }
 
 /**
@@ -92,6 +103,26 @@ export function parseJAb(xmlText) {
   const scale = SCALE[eingereicht.EINHEIT] ?? 1;
   const mul = (x) => x == null ? null : x * scale;
 
+  // Prior-year column: same positions in BETRAG_VJ, with its own unit. Only
+  // EINGABEDARSTELLUNG (how the numbers were entered) matters for scaling —
+  // ZIELDARSTELLUNG is a display hint and may say TE for euro values.
+  const vorhergehend = gj.EINGABEDARSTELLUNG?.DARSTELLUNG_VORHERGEHEND || {};
+  const scaleVj = SCALE[vorhergehend.EINHEIT] ?? 1;
+  const mulVj = (x) => x == null ? null : x * scaleVj;
+  const priorStichtag = ag.GESCHAEFTSJAHR_VORANGEGANGEN?.ENDE || null;
+  const prior = priorStichtag ? v4Year(envelope, mulVj, 'BETRAG_VJ') : null;
+
+  return {
+    stichtag,
+    currency: 'EUR',
+    ...v4Year(envelope, mul, 'BETRAG_GJ'),
+    arbeitnehmer: null,
+    priorYear: prior?.bilanzsumme != null ? { stichtag: priorStichtag, ...prior } : null,
+  };
+}
+
+// All KPIs of one column (current or prior year) of a v4 filing.
+function v4Year(envelope, mul, col) {
   // Pull named sections anywhere under the envelope.
   const umsatz       = walk(envelope, 'UMSATZERLOESE');
   const aktiva       = walk(envelope, 'AKTIVA');
@@ -100,24 +131,55 @@ export function parseJAb(xmlText) {
   const betriebs     = walk(envelope, 'ZWISCHENSUMME_BETRIEBSERFOLG');
   const ergebnisNach = walk(envelope, 'ERGEBNIS_NACH_STEUERN');
 
-  const bilanzsumme       = mul(topBetrag(aktiva));
-  const eigenkapitalBetrag = mul(topBetrag(eigenkapital));
-  const jahresergebnis    = mul(topBetrag(ergebnisNach));
-
-  const balanceSheet = extractBalanceSheet(aktiva, passiva, mul);
+  const bilanzsumme       = mul(topBetrag(aktiva, col));
+  const eigenkapitalBetrag = mul(topBetrag(eigenkapital, col));
+  const jahresergebnis    = mul(topBetrag(ergebnisNach, col));
 
   return {
-    stichtag,
-    currency: 'EUR',
-    umsatzerloese:    mul(topBetrag(umsatz)),
+    umsatzerloese:    mul(topBetrag(umsatz, col)),
     bilanzsumme,
     eigenkapital:     eigenkapitalBetrag,
     jahresergebnis,
-    betriebsergebnis: mul(topBetrag(betriebs)),
-    arbeitnehmer: null,
+    betriebsergebnis: mul(topBetrag(betriebs, col)),
     ek_quote: (bilanzsumme && eigenkapitalBetrag != null) ? eigenkapitalBetrag / bilanzsumme : null,
-    balanceSheet,
+    balanceSheet: extractBalanceSheet(aktiva, passiva, mul, col),
+    guv: extractV4Guv(walkAny(envelope, ['GUV_GKV', 'GUV_UKV']), mul, col),
   };
+}
+
+// ─── GuV (v4) ────────────────────────────────────────────────────────────
+// Element names as seen in GUV_GKV (Gesamtkostenverfahren). The tree nests
+// each subtotal around its components, so a depth-first walk below the GuV
+// root finds every position. Umsatzkostenverfahren filings (GUV_UKV) have no
+// separate Abschreibungen line — EBITDA comes back null for them.
+const V4_GUV = {
+  umsatzerloese:                    ['UMSATZERLOESE'],
+  rohergebnis:                      ['ROHERGEBNIS'], // assumed name, not yet seen in a v4 filing
+  bestandsveraenderung:             ['VERAENDERUNG_DES_BESTANDS_AN_ERZEUGNISSEN_UND_LEISTUNGEN'],
+  aktivierteEigenleistungen:        ['ANDERE_AKTIVIERTE_EIGENLEISTUNGEN'],
+  sonstigeBetrieblicheErtraege:     ['SONSTIGE_BETRIEBLICHE_ERTRAEGE'],
+  materialaufwand:                  ['AUFWENDUNGEN_FUER_HERSTELLUNGSLEISTUNGEN', 'MATERIALAUFWAND'],
+  personalaufwand:                  ['PERSONALAUFWAND'],
+  abschreibungen:                   ['ABSCHREIBUNGEN'],
+  sonstigeBetrieblicheAufwendungen: ['SONSTIGE_BETRIEBLICHE_AUFWENDUNGEN'],
+  betriebserfolg:                   ['ZWISCHENSUMME_BETRIEBSERFOLG'],
+  finanzerfolg:                     ['ZWISCHENSUMME_FINANZERFOLG'],
+  zinsaufwand:                      ['ZINSEN_UND_AEHNLICHE_AUFWENDUNGEN'],
+  ergebnisVorSteuern:               ['ERGEBNIS_VOR_STEUERN'],
+  steuernEinkommen:                 ['STEUERN_VOM_EINKOMMEN_UND_ERTRAG'],
+  ergebnisNachSteuern:              ['ERGEBNIS_NACH_STEUERN'],
+  jahresueberschuss:                ['JAHRESUEBERSCHUSS_JAHRESFEHLBETRAG'],
+};
+
+function extractV4Guv(guvRoot, mul, col) {
+  if (!guvRoot) return null;
+  const guv = {};
+  for (const [field, names] of Object.entries(V4_GUV)) {
+    guv[field] = sectionAmount(guvRoot, names, mul, col);
+  }
+  if (guv.betriebserfolg == null && guv.jahresueberschuss == null) return null;
+  guv.ebitda = ebitdaOf(guv);
+  return guv;
 }
 
 // ─── Bilanz‑Breakdown ────────────────────────────────────────────────────
@@ -128,8 +190,10 @@ export function parseJAb(xmlText) {
 // schema. We accept a handful of known synonyms (e.g. JAHRESUEBERSCHUSS vs
 // JAHRESFEHLBETRAG) to cover both positive and negative reporters.
 
-function extractBalanceSheet(aktiva, passiva, mul) {
+function extractBalanceSheet(aktiva, passiva, mul, col = 'BETRAG_GJ') {
   if (!aktiva && !passiva) return null;
+  const top = (node) => (node ? mul(topBetrag(node, col)) : null);
+  const amount = (root, names) => sectionAmount(root, names, mul, col);
 
   const anlageNode = aktiva && walk(aktiva, 'ANLAGEVERMOEGEN');
   const umlaufNode = aktiva && walk(aktiva, 'UMLAUFVERMOEGEN');
@@ -147,47 +211,47 @@ function extractBalanceSheet(aktiva, passiva, mul) {
   let verbindLangfristig = null;
   if (verbindNode) {
     const davon = walkAny(verbindNode, ['DAVON_RESTLAUFZEIT_GROESSER_EIN_JAHR', 'RESTLAUFZEIT_GROESSER_EIN_JAHR']);
-    if (davon) verbindLangfristig = mul(topBetrag(davon));
+    if (davon) verbindLangfristig = top(davon);
   }
 
   return {
     aktiva: {
-      total: mul(topBetrag(aktiva)),
+      total: top(aktiva),
       anlagevermoegen: {
-        total:        anlageNode ? mul(topBetrag(anlageNode)) : null,
-        immaterielle: sectionAmount(anlageNode, ['IMMATERIELLE_VERMOEGENSGEGENSTAENDE'], mul),
-        sachanlagen:  sectionAmount(anlageNode, ['SACHANLAGEN'], mul),
-        finanzanlagen: sectionAmount(anlageNode, ['FINANZANLAGEN'], mul),
+        total:        top(anlageNode),
+        immaterielle: amount(anlageNode, ['IMMATERIELLE_VERMOEGENSGEGENSTAENDE']),
+        sachanlagen:  amount(anlageNode, ['SACHANLAGEN']),
+        finanzanlagen: amount(anlageNode, ['FINANZANLAGEN']),
       },
       umlaufvermoegen: {
-        total:       umlaufNode ? mul(topBetrag(umlaufNode)) : null,
-        vorraete:    sectionAmount(umlaufNode, ['VORRAETE'], mul),
-        forderungen: sectionAmount(umlaufNode, ['FORDERUNGEN_UND_SONSTIGE_VERMOEGENSGEGENSTAENDE', 'FORDERUNGEN'], mul),
-        wertpapiere: sectionAmount(umlaufNode, ['WERTPAPIERE_UND_ANTEILE', 'WERTPAPIERE'], mul),
-        kassenbestand: sectionAmount(umlaufNode, ['KASSENBESTAND_SCHECKS_GUTHABEN_BEI_KREDITINSTITUTEN', 'KASSENBESTAND'], mul),
+        total:       top(umlaufNode),
+        vorraete:    amount(umlaufNode, ['VORRAETE']),
+        forderungen: amount(umlaufNode, ['FORDERUNGEN_UND_SONSTIGE_VERMOEGENSGEGENSTAENDE', 'FORDERUNGEN']),
+        wertpapiere: amount(umlaufNode, ['WERTPAPIERE_UND_ANTEILE', 'WERTPAPIERE']),
+        kassenbestand: amount(umlaufNode, ['KASSENBESTAND_SCHECKS_GUTHABEN_BEI_KREDITINSTITUTEN', 'KASSENBESTAND']),
       },
-      rechnungsabgrenzung: aktivaRechAbgr ? mul(topBetrag(aktivaRechAbgr)) : null,
+      rechnungsabgrenzung: top(aktivaRechAbgr),
     },
     passiva: {
-      total: mul(topBetrag(passiva)),
+      total: top(passiva),
       eigenkapital: {
-        total:            ekNode ? mul(topBetrag(ekNode)) : null,
-        stammkapital:     sectionAmount(ekNode, ['EINGEFORDERTES_STAMMKAPITAL', 'STAMMKAPITAL', 'NENNKAPITAL', 'GRUNDKAPITAL'], mul),
-        kapitalruecklagen: sectionAmount(ekNode, ['KAPITALRUECKLAGEN'], mul),
-        gewinnruecklagen:  sectionAmount(ekNode, ['GEWINNRUECKLAGEN'], mul),
+        total:            top(ekNode),
+        stammkapital:     amount(ekNode, ['EINGEFORDERTES_STAMMKAPITAL', 'STAMMKAPITAL', 'NENNKAPITAL', 'GRUNDKAPITAL']),
+        kapitalruecklagen: amount(ekNode, ['KAPITALRUECKLAGEN']),
+        gewinnruecklagen:  amount(ekNode, ['GEWINNRUECKLAGEN']),
         bilanzgewinn: {
-          total:           bilanzgewinnNode ? mul(topBetrag(bilanzgewinnNode)) : null,
-          gewinnvortrag:   sectionAmount(bilanzgewinnNode, ['GEWINNVORTRAG', 'VERLUSTVORTRAG'], mul),
-          jahresueberschuss: sectionAmount(bilanzgewinnNode, ['JAHRESUEBERSCHUSS', 'JAHRESFEHLBETRAG'], mul),
+          total:           top(bilanzgewinnNode),
+          gewinnvortrag:   amount(bilanzgewinnNode, ['GEWINNVORTRAG', 'VERLUSTVORTRAG']),
+          jahresueberschuss: amount(bilanzgewinnNode, ['JAHRESUEBERSCHUSS', 'JAHRESFEHLBETRAG']),
         },
       },
-      unversteuerteRuecklagen: sectionAmount(passiva, ['UNVERSTEUERTE_RUECKLAGEN'], mul),
-      rueckstellungen: rueckstNode ? mul(topBetrag(rueckstNode)) : null,
+      unversteuerteRuecklagen: amount(passiva, ['UNVERSTEUERTE_RUECKLAGEN']),
+      rueckstellungen: top(rueckstNode),
       verbindlichkeiten: {
-        total:       verbindNode ? mul(topBetrag(verbindNode)) : null,
+        total:       top(verbindNode),
         langfristig: verbindLangfristig,
       },
-      rechnungsabgrenzung: passivaRechAbgr && passivaRechAbgr !== aktivaRechAbgr ? mul(topBetrag(passivaRechAbgr)) : null,
+      rechnungsabgrenzung: passivaRechAbgr && passivaRechAbgr !== aktivaRechAbgr ? top(passivaRechAbgr) : null,
     },
   };
 }
@@ -197,19 +261,55 @@ function extractBalanceSheet(aktiva, passiva, mul) {
 //   Aktiva:  HGB_224_2   (A=Anlage, B=Umlauf, C=RAP, D=latente Steuern)
 //   Passiva: HGB_224_3   (A=EK mit IV=Bilanzgewinn/x=Gewinnvortrag,
 //                         B=unversteuerte Rücklagen, C=Rückst., D=Verb., E=RAP)
-// Current-year amounts live in <BETRAG> in euros (no scaling); VJ column is
-// in thousand-euros but we don't surface it here. GuV is rarely included in
-// BMF filings — we derive Jahresüberschuss from Bilanzgewinn − Gewinnvortrag.
+//   GuV:     HGB_231_2_* (Gesamtkostenverfahren). Only full-form filings
+//                         (ALLG_JUSTIZ/JABFORM/HGBFORM "JAB") carry it; the
+//                         small form ("UGB23", HGB_Form_2/3) is balance sheet only.
+// Current-year amounts live in <BETRAG> in euros. <BETRAG_VJ> holds the prior
+// year — in thousand-euros when ALLG_JUSTIZ/VOR_GJ/WERT_TSD is "j", else euros.
 
-function bmfAmount(section) {
+function bmfAmount(section, col = 'BETRAG') {
   if (!section) return null;
   const pz = section.POSTENZEILE;
   const first = Array.isArray(pz) ? pz[0] : pz;
   if (!first) return null;
-  const raw = first.BETRAG;
+  const raw = first[col];
   if (raw == null || raw === '') return null;
   const n = Number(raw);
   return Number.isFinite(n) ? n : null;
+}
+
+// §231 Abs 2 positions as numbered in the BMF schema, verified against the
+// subtotals of real filings: Z1–Z8 sum to Z9, Z10–Z15 to Z16, Z9 + Z16 = Z17,
+// Z17 + Z21 = Z30 and Z30 + Z31 = Z22. Expenses carry a negative sign.
+const BMF_GUV = {
+  umsatzerloese:                    'HGB_231_2_1',
+  rohergebnis:                      'HGB_231_2_HGB_279', // mittelgroße GmbH: replaces Z1–Z3 and Z5
+  bestandsveraenderung:             'HGB_231_2_2',
+  aktivierteEigenleistungen:        'HGB_231_2_3',
+  sonstigeBetrieblicheErtraege:     'HGB_231_2_4',
+  materialaufwand:                  'HGB_231_2_5',
+  personalaufwand:                  'HGB_231_2_6',
+  abschreibungen:                   'HGB_231_2_7',
+  sonstigeBetrieblicheAufwendungen: 'HGB_231_2_8',
+  betriebserfolg:                   'HGB_231_2_9',
+  finanzerfolg:                     'HGB_231_2_16',
+  zinsaufwand:                      'HGB_231_2_15',
+  ergebnisVorSteuern:               'HGB_231_2_17',
+  steuernEinkommen:                 'HGB_231_2_21',
+  ergebnisNachSteuern:              'HGB_231_2_30',
+  jahresueberschuss:                'HGB_231_2_22',
+};
+
+function extractBmfGuv(guvNode, mul, col) {
+  if (!guvNode) return null;
+  const guv = {};
+  for (const [field, tag] of Object.entries(BMF_GUV)) {
+    const node = walk(guvNode, tag);
+    guv[field] = node ? mul(bmfAmount(node, col)) : null;
+  }
+  if (guv.betriebserfolg == null && guv.jahresueberschuss == null) return null;
+  guv.ebitda = ebitdaOf(guv);
+  return guv;
 }
 
 function parseBmfLegacy(xmlText) {
@@ -226,9 +326,27 @@ function parseBmfLegacy(xmlText) {
   const stichtag = gj.ENDE;
   if (!stichtag) return null;
 
+  if (!walk(gl, 'HGB_224_2') && !walk(gl, 'HGB_224_3')) return null;
+
+  const vjScale = allg.VOR_GJ?.WERT_TSD === 'j' ? 1000 : 1;
+  const priorStichtag = allg.VOR_GJ?.ENDE || null;
+  const prior = priorStichtag ? bmfYear(gl, (x) => x == null ? null : x * vjScale, 'BETRAG_VJ') : null;
+
+  return {
+    stichtag,
+    currency: env.BILANZ_GLIEDERUNG?.ALLG_JUSTIZ?.WAEHRUNG || 'EUR',
+    ...bmfYear(gl, (x) => x, 'BETRAG'),
+    arbeitnehmer: null,
+    priorYear: prior?.bilanzsumme != null ? { stichtag: priorStichtag, ...prior } : null,
+  };
+}
+
+// All KPIs of one column (current or prior year) of a BMF filing.
+function bmfYear(gl, mul, col) {
+  const amount = (node) => (node ? mul(bmfAmount(node, col)) : null);
+
   const aktiva  = walk(gl, 'HGB_224_2');
   const passiva = walk(gl, 'HGB_224_3');
-  if (!aktiva && !passiva) return null;
 
   const anlage  = aktiva && walk(aktiva, 'HGB_224_2_A');
   const umlauf  = aktiva && walk(aktiva, 'HGB_224_2_B');
@@ -240,11 +358,12 @@ function parseBmfLegacy(xmlText) {
   const verb    = passiva && walk(passiva, 'HGB_224_3_D');
   const rap_pas = passiva && walk(passiva, 'HGB_224_3_E');
 
-  const bilanzsumme = bmfAmount(aktiva);
-  const eigenkapital = bmfAmount(ek);
-  const bgTotal        = bmfAmount(bgNode);
-  const gewinnvortrag  = bgNode ? bmfAmount(walk(bgNode, 'HGB_224_3_A_IV_x')) : null;
-  // Jahresüberschuss is not a distinct BMF element — derive from Bilanzgewinn − Gewinnvortrag.
+  const bilanzsumme = amount(aktiva);
+  const eigenkapital = amount(ek);
+  const bgTotal        = amount(bgNode);
+  const gewinnvortrag  = bgNode ? amount(walk(bgNode, 'HGB_224_3_A_IV_x')) : null;
+  // Jahresüberschuss is not a distinct balance-sheet element — derive from
+  // Bilanzgewinn − Gewinnvortrag (ignores reserve movements).
   const jahresueberschuss = (bgTotal != null && gewinnvortrag != null)
     ? bgTotal - gewinnvortrag
     : null;
@@ -253,52 +372,54 @@ function parseBmfLegacy(xmlText) {
     aktiva: {
       total: bilanzsumme,
       anlagevermoegen: {
-        total:         bmfAmount(anlage),
-        immaterielle:  anlage && bmfAmount(walk(anlage, 'HGB_224_2_A_I')),
-        sachanlagen:   anlage && bmfAmount(walk(anlage, 'HGB_224_2_A_II')),
-        finanzanlagen: anlage && bmfAmount(walk(anlage, 'HGB_224_2_A_III')),
+        total:         amount(anlage),
+        immaterielle:  anlage && amount(walk(anlage, 'HGB_224_2_A_I')),
+        sachanlagen:   anlage && amount(walk(anlage, 'HGB_224_2_A_II')),
+        finanzanlagen: anlage && amount(walk(anlage, 'HGB_224_2_A_III')),
       },
       umlaufvermoegen: {
-        total:         bmfAmount(umlauf),
-        vorraete:      umlauf && bmfAmount(walk(umlauf, 'HGB_224_2_B_I')),
-        forderungen:   umlauf && bmfAmount(walk(umlauf, 'HGB_224_2_B_II')),
-        wertpapiere:   umlauf && bmfAmount(walk(umlauf, 'HGB_224_2_B_III')),
-        kassenbestand: umlauf && bmfAmount(walk(umlauf, 'HGB_224_2_B_IV')),
+        total:         amount(umlauf),
+        vorraete:      umlauf && amount(walk(umlauf, 'HGB_224_2_B_I')),
+        forderungen:   umlauf && amount(walk(umlauf, 'HGB_224_2_B_II')),
+        wertpapiere:   umlauf && amount(walk(umlauf, 'HGB_224_2_B_III')),
+        kassenbestand: umlauf && amount(walk(umlauf, 'HGB_224_2_B_IV')),
       },
-      rechnungsabgrenzung: bmfAmount(rap_akt),
+      rechnungsabgrenzung: amount(rap_akt),
     },
     passiva: {
-      total: bmfAmount(passiva),
+      total: amount(passiva),
       eigenkapital: {
         total:             eigenkapital,
-        stammkapital:      ek && bmfAmount(walkAny(ek, ['HGB_229_1_A_I', 'HGB_224_3_A_I'])),
-        kapitalruecklagen: ek && bmfAmount(walk(ek, 'HGB_224_3_A_II')),
-        gewinnruecklagen:  ek && bmfAmount(walk(ek, 'HGB_224_3_A_III')),
+        stammkapital:      ek && amount(walkAny(ek, ['HGB_229_1_A_I', 'HGB_224_3_A_I'])),
+        kapitalruecklagen: ek && amount(walk(ek, 'HGB_224_3_A_II')),
+        gewinnruecklagen:  ek && amount(walk(ek, 'HGB_224_3_A_III')),
         bilanzgewinn: {
           total: bgTotal,
           gewinnvortrag,
           jahresueberschuss,
         },
       },
-      rueckstellungen: bmfAmount(rueck),
+      rueckstellungen: amount(rueck),
       verbindlichkeiten: {
-        total: bmfAmount(verb),
+        total: amount(verb),
         langfristig: null, // BMF legacy doesn't break out Restlaufzeit at this level
       },
-      rechnungsabgrenzung: bmfAmount(rap_pas),
+      rechnungsabgrenzung: amount(rap_pas),
     },
   };
 
+  const guv = extractBmfGuv(gl.GUV, mul, col);
+
   return {
-    stichtag,
-    currency: env.BILANZ_GLIEDERUNG?.ALLG_JUSTIZ?.WAEHRUNG || 'EUR',
-    umsatzerloese: null,          // not in BMF filings without full GuV
+    umsatzerloese: guv?.umsatzerloese ?? null,
     bilanzsumme,
     eigenkapital,
-    jahresergebnis: jahresueberschuss,
-    betriebsergebnis: null,
-    arbeitnehmer: null,
+    // The GuV's Jahresüberschuss is exact; the balance-sheet derivation is
+    // only the fallback for small-form filings without GuV.
+    jahresergebnis: guv?.jahresueberschuss ?? jahresueberschuss,
+    betriebsergebnis: guv?.betriebserfolg ?? null,
     ek_quote: (bilanzsumme && eigenkapital != null) ? eigenkapital / bilanzsumme : null,
     balanceSheet,
+    guv,
   };
 }

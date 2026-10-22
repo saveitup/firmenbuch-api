@@ -33,6 +33,7 @@ export function migrate() {
   // existed in schema.sql. SQLite lacks IF NOT EXISTS on ALTER, so guard with
   // a table_info check.
   addColumnIfMissing(db, 'financials_yearly', 'balance_json', 'TEXT');
+  addColumnIfMissing(db, 'financials_yearly', 'guv_json', 'TEXT');
   return { path: db.name };
 }
 

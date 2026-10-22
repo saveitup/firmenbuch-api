@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS financials_yearly (
   country            TEXT NOT NULL,
   national_id_canon  TEXT NOT NULL,
   stichtag           TEXT NOT NULL,
-  source_ref         TEXT,                             -- adapter-specific document ref
+  source_ref         TEXT,                             -- adapter-specific document ref; "#VJ" suffix = taken from the prior-year column of that document
   currency           TEXT DEFAULT 'EUR',
   umsatzerloese      REAL,
   bilanzsumme        REAL,
@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS financials_yearly (
   arbeitnehmer       REAL,
   ek_quote           REAL,
   balance_json       TEXT,                              -- full Aktiva/Passiva breakdown (Austria v4 JAb)
+  guv_json           TEXT,                              -- GuV line items incl. EBITDA (Austria JAb full form)
   health_score       REAL,
   health_grade       TEXT,
   computed_at        TEXT NOT NULL DEFAULT (datetime('now')),
