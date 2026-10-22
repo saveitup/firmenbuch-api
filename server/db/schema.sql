@@ -164,3 +164,36 @@ CREATE TABLE IF NOT EXISTS at_jab_ingest (
   error              TEXT,
   ingested_at        TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Cash flow per firm and year, derived by analytics/cashflow.js from one
+-- Jahresabschluss and the Vorjahr column of the same filing. Recomputed by
+-- scripts/at-cashflow.mjs from the stored XML (data/at-jab-xml/).
+CREATE TABLE IF NOT EXISTS cashflow_yearly (
+  country              TEXT NOT NULL,
+  national_id_canon    TEXT NOT NULL,
+  stichtag             TEXT NOT NULL,
+  prior_stichtag       TEXT,
+  source_ref           TEXT,                           -- document the year was derived from
+  tier                 TEXT,                           -- A: GuV + 2 Bilanzen · B: nur Bilanzen + JÜ
+  jahresueberschuss    REAL,
+  abschreibungen       REAL,
+  ebitda               REAL,
+  delta_rueckstellungen REAL,
+  delta_nwc            REAL,
+  cfo                  REAL,
+  capex                REAL,
+  growth_capex         REAL,
+  fcf                  REAL,
+  fcf_operativ         REAL,                           -- EBIT × (1 − 23 %) + AfA + ΔRückst − ΔNWC − CapEx
+  cash_conversion      REAL,                           -- FCF operativ / EBITDA
+  net_debt             REAL,                           -- Anleihen + Bank − Kasse − Wertpapiere
+  net_debt_ebitda      REAL,
+  konzernsaldo         REAL,                           -- Konzern-/Gesellschafterverb. − Konzernforderungen
+  ausschuettung_netto  REAL,                           -- EK(t−1) + JÜ − EK(t); < 0 = Kapitalzufuhr
+  finanzinvestitionen  REAL,                           -- ΔFinanzanlagen
+  residual             REAL,                           -- financing-side cross-check, see cashflow.js
+  quality              TEXT,                           -- ok | pruefen
+  warnings_json        TEXT,
+  computed_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (country, national_id_canon, stichtag)
+);

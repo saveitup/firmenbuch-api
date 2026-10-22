@@ -14,6 +14,7 @@
 //   npm run ingest:at-jab -- --scope=all          # every firm in the universe
 //   npm run ingest:at-jab -- --retry-errors
 //   npm run ingest:at-jab -- --restrip            # re-strip stored XMLs, no IWG calls
+//   npm run ingest:at-jab -- --reparse            # re-parse stored XMLs into the DB, no IWG calls
 //
 // Run scripts/at-universe.mjs first. Idempotent: processed documents are
 // recorded in at_jab_ingest and skipped on re-runs.
@@ -95,6 +96,32 @@ if (args.restrip) {
 // ─── Main ───────────────────────────────────────────────────────────────
 migrate();
 const db = getDb();
+
+// `--reparse`: apply parser changes to everything already loaded. Prior-year
+// rows derived from these filings ("#VJ") are rebuilt; a firm's own filing
+// for that year is never touched.
+if (args.reparse) {
+  const docs = db.prepare(`SELECT national_id_canon AS canon, doc_key AS docKey FROM at_jab_ingest WHERE status = 'ok'`).all();
+  const dropVj = db.prepare(`DELETE FROM financials_yearly WHERE country = 'AT' AND national_id_canon = ? AND source_ref = ?`);
+  const reparse = db.transaction((items) => {
+    let n = 0;
+    for (const { canon, docKey, row } of items) {
+      dropVj.run(canon, `${docKey}#VJ`);
+      upsertFinancials('AT', canon, [{ ...row, source_ref: docKey }]);
+      n++;
+    }
+    return n;
+  });
+  const items = [];
+  for (const { canon, docKey } of docs) {
+    const file = path.join(RAW_DIR, `${docKey}.xml.gz`);
+    if (!existsSync(file)) continue;
+    const row = parseJAb(zlib.gunzipSync(readFileSync(file)).toString('utf8'));
+    if (row) items.push({ canon, docKey, row });
+  }
+  log(`reparse: ${reparse(items)} von ${docs.length} Abschlüssen neu eingelesen`);
+  process.exit(0);
+}
 
 const todo = db.prepare(`
   SELECT u.national_id_canon AS canon, u.latest_jab_xml_key AS docKey

@@ -14,7 +14,13 @@ export const EBITDA_BANDS = {
 const SORTS = {
   ebitda: 'ebitda', umsatz: 'umsatz_oder_roh', bilanzsumme: 'bilanzsumme',
   ek_quote: 'ek_quote', name: 'name', stichtag: 'stichtag', wachstum: 'ebitda_wachstum',
+  fcf: 'fcf_operativ', cash_conversion: 'cash_conversion', net_debt_ebitda: 'net_debt_ebitda',
 };
+
+// A net group/shareholder balance above this share of the Bilanzsumme
+// (cash pooling, group loans) marks a firm as part of a group even without
+// a Konzernabschluss of its own.
+const VERFLECHTUNG_QUOTE = 0.2;
 
 const BASE_SQL = `
   WITH ingested AS (
@@ -48,12 +54,27 @@ const BASE_SQL = `
       CASE WHEN json_extract(v.guv_json, '$.ebitda') > 0
            THEN json_extract(f.guv_json, '$.ebitda') * 1.0 / json_extract(v.guv_json, '$.ebitda') - 1 END AS ebitda_wachstum,
       c.legal_form_text                                 AS rechtsform_text,
+      cf.fcf                                            AS fcf,
+      cf.fcf_operativ                                   AS fcf_operativ,
+      -- Result driven by dividends/interest rather than operations.
+      CASE WHEN json_extract(f.guv_json, '$.finanzerfolg') > MAX(COALESCE(json_extract(f.guv_json, '$.betriebserfolg'), 0), 0)
+           THEN 1 ELSE 0 END                            AS holding,
+      cf.cfo                                            AS cfo,
+      cf.capex                                          AS capex,
+      cf.cash_conversion                                AS cash_conversion,
+      cf.net_debt                                       AS net_debt,
+      cf.net_debt_ebitda                                AS net_debt_ebitda,
+      cf.konzernsaldo                                   AS konzernsaldo,
+      cf.quality                                        AS cf_quality,
+      cf.warnings_json                                  AS cf_warnings_json,
+      CASE WHEN f.bilanzsumme > 0 AND ABS(cf.konzernsaldo) > ${VERFLECHTUNG_QUOTE} * f.bilanzsumme THEN 1 ELSE 0 END AS verflechtung,
       EXISTS (SELECT 1 FROM at_register_documents d WHERE d.national_id_canon = c.national_id_canon AND d.doc_code = '49')  AS konzern,
       EXISTS (SELECT 1 FROM at_register_documents d WHERE d.national_id_canon = c.national_id_canon AND d.doc_code = '136') AS liquidation
     FROM ranked f
     JOIN companies c ON c.country = 'AT' AND c.national_id_canon = f.national_id_canon
     LEFT JOIN ranked v ON v.national_id_canon = f.national_id_canon AND v.rn = 2
     LEFT JOIN at_company_profile p ON p.national_id_canon = f.national_id_canon
+    LEFT JOIN cashflow_yearly cf ON cf.country = 'AT' AND cf.national_id_canon = f.national_id_canon AND cf.stichtag = f.stichtag
     WHERE f.rn = 1
   )
   SELECT * FROM rows
@@ -72,7 +93,15 @@ export function screenAt(params = {}) {
   if (band.max != null) { where.push('ebitda <= ?'); args.push(band.max); }
   if (params.bundesland) { where.push('bundesland = ?'); args.push(params.bundesland); }
   if (params.konzern === 'ohne') where.push('konzern = 0');
+  // "unabhängig": no Konzernabschluss, no large group balance, not a holding.
+  if (params.konzern === 'unabhaengig') where.push('konzern = 0 AND verflechtung = 0 AND holding = 0');
   if (params.konzern === 'nur') where.push('konzern = 1');
+  // Cash filters only trust years whose financing-side cross-check closes.
+  if (params.cash === 'fcf') where.push("fcf_operativ > 0 AND cf_quality = 'ok'");
+  if (params.cash === 'cc50') where.push("cash_conversion >= 0.5 AND cf_quality = 'ok'");
+  if (params.verschuldung === 'nettocash') where.push('net_debt <= 0');
+  if (params.verschuldung === 'max1') where.push('net_debt_ebitda <= 1');
+  if (params.verschuldung === 'max2') where.push('net_debt_ebitda <= 2');
   if (params.q) { where.push('UPPER(name) LIKE ?'); args.push(`%${String(params.q).replace(/[%_]/g, '').toUpperCase()}%`); }
   // Default: only legal forms a majority takeover can target (no
   // Genossenschaft, Stiftung, Verein, Sparkasse, "sonstiger Rechtsträger").
@@ -88,8 +117,11 @@ export function screenAt(params = {}) {
   const sortCol = SORTS[params.sort] || 'ebitda';
   const dir = params.dir === 'asc' ? 'ASC' : 'DESC';
   const limit = Math.min(Number(params.limit) || 500, 5000);
+  // Single-year conversion above 150 % comes from releasing working capital;
+  // cap it for sorting so one-off effects do not lead the list.
+  const sortExpr = sortCol === 'cash_conversion' ? 'MIN(cash_conversion, 1.5)' : sortCol;
   const sql = `${BASE_SQL} WHERE ${where.join(' AND ')}
-    ORDER BY ${sortCol} IS NULL, ${sortCol} ${dir}, name ASC LIMIT ${limit}`;
+    ORDER BY ${sortCol} IS NULL, ${sortExpr} ${dir}, ebitda DESC, name ASC LIMIT ${limit}`;
   const rows = db.prepare(sql).all(...args).map(withOrgane);
   const total = db.prepare(`SELECT COUNT(*) AS n FROM (${BASE_SQL} WHERE ${where.join(' AND ')})`).get(...args).n;
   return { band: params.band in EBITDA_BANDS ? params.band : 'kern', total, rows, meta: corpusMeta() };
@@ -101,10 +133,15 @@ function withOrgane(r) {
   try { organe = r.organe_json ? JSON.parse(r.organe_json) : []; } catch {}
   const gf = organe.filter((o) => o.roleCode === 'GF' || o.roleCode === 'VM' || o.roleCode === 'KP');
   const jahrgaenge = gf.map((o) => o.geburtsjahr).filter(Boolean);
-  const { organe_json, ...rest } = r;
+  let cfWarnings = [];
+  try { cfWarnings = r.cf_warnings_json ? JSON.parse(r.cf_warnings_json) : []; } catch {}
+  const { organe_json, cf_warnings_json, ...rest } = r;
   return {
     ...rest,
     konzern: !!r.konzern,
+    verflechtung: !!r.verflechtung,
+    holding: !!r.holding,
+    cfWarnings,
     gfCount: gf.length,
     prokuraCount: organe.filter((o) => o.roleCode === 'PR').length,
     aeltesterGfJahrgang: jahrgaenge.length ? Math.min(...jahrgaenge) : null,
@@ -132,7 +169,11 @@ const CSV_COLUMNS = [
   ['stichtag', 'Stichtag'], ['umsatz', 'Umsatz'], ['rohergebnis', 'Rohergebnis'], ['ebitda', 'EBITDA'],
   ['ebitda_vj', 'EBITDA Vorjahr'], ['ebit', 'Betriebserfolg'], ['jahresergebnis', 'Jahresergebnis'],
   ['bilanzsumme', 'Bilanzsumme'], ['eigenkapital', 'Eigenkapital'], ['ek_quote', 'EK-Quote'],
-  ['konzern', 'Konzernabschluss'], ['gfCount', 'GF'], ['prokuraCount', 'Prokura'],
+  ['cfo', 'Operativer Cashflow'], ['capex', 'CapEx'], ['fcf_operativ', 'FCF operativ'], ['fcf', 'FCF gesamt'],
+  ['cash_conversion', 'Cash Conversion'], ['net_debt', 'Net Debt'], ['net_debt_ebitda', 'Net Debt / EBITDA'],
+  ['konzernsaldo', 'Konzernsaldo'], ['cf_quality', 'Cashflow-Gegenprobe'],
+  ['konzern', 'Konzernabschluss'], ['verflechtung', 'Konzernbezug'], ['holding', 'Holding?'],
+  ['gfCount', 'GF'], ['prokuraCount', 'Prokura'],
 ];
 
 export function toCsv(rows) {

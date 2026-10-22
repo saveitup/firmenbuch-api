@@ -1066,17 +1066,18 @@ const SCREEN_BANDS = [
 ];
 const BUNDESLAENDER = ['Wien', 'Niederösterreich', 'Oberösterreich', 'Steiermark', 'Tirol', 'Kärnten', 'Salzburg', 'Vorarlberg', 'Burgenland'];
 const SCREEN_COLUMNS = [
-  // [sort key or null, label, title]
-  ['name', 'Firma', 'Firmenwortlaut · FN · Ort'],
-  [null, 'Bundesland', 'Sitz laut Firmenbuch'],
-  ['stichtag', 'GJ', 'Bilanzstichtag des letzten Abschlusses'],
-  ['umsatz', 'Umsatz', 'Umsatzerlöse; „R“ = nur Rohergebnis ausgewiesen (mittelgroße GmbH)'],
-  ['ebitda', 'EBITDA', 'Betriebserfolg + Abschreibungen, wie berichtet (nicht normalisiert)'],
-  ['wachstum', 'Δ VJ', 'EBITDA-Veränderung gegenüber dem Vorjahr'],
-  [null, 'Marge', 'EBITDA / Umsatz — nur wenn der Umsatz ausgewiesen ist'],
-  ['bilanzsumme', 'Bilanzsumme', ''],
-  ['ek_quote', 'EK-Quote', 'Eigenkapital / Bilanzsumme'],
-  [null, 'Organe', 'Geschäftsführung/Vorstand · Prokura (Kontext, kein Filter)'],
+  // [sort key or null, label, title, numeric]
+  ['name', 'Firma', 'Firmenwortlaut · FN · Ort (Bundesland) · Rechtsform', false],
+  ['stichtag', 'GJ', 'Bilanzstichtag des letzten Abschlusses', false],
+  ['umsatz', 'Umsatz', 'Umsatzerlöse; „R“ = nur Rohergebnis ausgewiesen (mittelgroße GmbH)', true],
+  ['ebitda', 'EBITDA', 'Betriebserfolg + Abschreibungen, wie berichtet (nicht normalisiert)', true],
+  ['wachstum', 'Δ VJ', 'EBITDA-Veränderung gegenüber dem Vorjahr', true],
+  [null, 'Marge', 'EBITDA / Umsatz — nur wenn der Umsatz ausgewiesen ist', true],
+  ['fcf', 'FCF op.', 'Operativer Free Cashflow nach Steuern, Investitionen und Working Capital, vor Zinsen und ohne Finanzerfolg (ein Geschäftsjahr)', true],
+  ['cash_conversion', 'Cash Conv.', 'FCF operativ / EBITDA — über 150 % meist einmaliger Working-Capital-Abbau', true],
+  ['net_debt_ebitda', 'Net Debt', 'Nettoverschuldung (Bank + Anleihen − Kasse − Wertpapiere) in Vielfachen des EBITDA', true],
+  ['ek_quote', 'EK-Quote', 'Eigenkapital / Bilanzsumme', true],
+  [null, 'Organe', 'Geschäftsführung/Vorstand · Prokura (Kontext, kein Filter)', false],
 ];
 let screenTimer = null;
 // EBITDA decides the mandate band — "5 Mio." for 4,97 Mio. would mislead.
@@ -1090,6 +1091,8 @@ function renderScreener(filters) {
   bar.querySelector('[name=band]').value = f.band;
   bar.querySelector('[name=bl]').value = f.bl || '';
   bar.querySelector('[name=konzern]').value = f.konzern || '';
+  bar.querySelector('[name=cash]').value = f.cash || '';
+  bar.querySelector('[name=verschuldung]').value = f.verschuldung || '';
   bar.querySelector('[name=rechtsform]').value = f.rechtsform || '';
   const q = bar.querySelector('[name=q]');
   if (document.activeElement !== q) q.value = f.q || '';
@@ -1109,7 +1112,16 @@ function buildScreenerShell() {
       <label><span>EBITDA-Band</span><select name="band"></select></label>
       <label><span>Bundesland</span><select name="bl"><option value="">Alle</option></select></label>
       <label><span>Konzern</span><select name="konzern">
-        <option value="">Alle</option><option value="ohne">ohne Konzernabschluss</option><option value="nur">nur mit Konzernabschluss</option>
+        <option value="">Alle</option><option value="ohne">ohne Konzernabschluss</option>
+        <option value="unabhaengig">unabhängig (ohne Konzernbezug, keine Holding)</option>
+        <option value="nur">nur mit Konzernabschluss</option>
+      </select></label>
+      <label><span>Free Cashflow</span><select name="cash">
+        <option value="">Alle</option><option value="fcf">FCF operativ positiv</option><option value="cc50">Cash Conversion ≥ 50 %</option>
+      </select></label>
+      <label><span>Verschuldung</span><select name="verschuldung">
+        <option value="">Alle</option><option value="nettocash">Nettocash</option>
+        <option value="max1">≤ 1× EBITDA</option><option value="max2">≤ 2× EBITDA</option>
       </select></label>
       <label><span>Rechtsform</span><select name="rechtsform">
         <option value="">übernahmefähig</option><option value="alle">alle</option>
@@ -1125,7 +1137,9 @@ function buildScreenerShell() {
     <p class="screener-note">
       Quelle: Firmenbuch (JustizOnline IWG), Jahresabschlüsse und Kurzinformation — kein amtlicher Auszug.
       Kennzahlen wie berichtet; EBITDA = Betriebserfolg + Abschreibungen, nicht normalisiert.
-      Geladen werden zuerst Firmen mit Lagebericht oder Bestätigungsvermerk (mittelgroß/groß).
+      Cashflow aus Bilanz t und Vorjahresspalte desselben Abschlusses (ein Geschäftsjahr, indirekt abgeleitet);
+      „?“ markiert Werte mit Hinweisen, etwa einmaligen Working-Capital-Effekten oder offener Gegenprobe.
+      Geladen sind Firmen mit Lagebericht oder Bestätigungsvermerk (mittelgroß/groß).
     </p>`;
   const bar = els.screener.querySelector('.screener-bar');
   for (const [v, label] of SCREEN_BANDS) bar.querySelector('[name=band]').add(new Option(label, v));
@@ -1136,12 +1150,12 @@ function buildScreenerShell() {
     screenTimer = setTimeout(updateScreenHash, 300);
   });
   const headRow = els.screener.querySelector('thead tr');
-  for (const [key, label, title] of SCREEN_COLUMNS) {
+  for (const [key, label, title, numeric] of SCREEN_COLUMNS) {
     const th = document.createElement('th');
     th.textContent = label;
     if (title) th.title = title;
     if (key) { th.dataset.sort = key; th.classList.add('sortable'); }
-    if (['umsatz', 'ebitda', 'wachstum', 'bilanzsumme', 'ek_quote'].includes(key) || label === 'Marge') th.classList.add('num');
+    if (numeric) th.classList.add('num');
     headRow.appendChild(th);
   }
   headRow.addEventListener('click', (e) => {
@@ -1167,6 +1181,8 @@ function updateScreenHash() {
       band: bar.querySelector('[name=band]').value,
       bl: bar.querySelector('[name=bl]').value,
       konzern: bar.querySelector('[name=konzern]').value,
+      cash: bar.querySelector('[name=cash]').value,
+      verschuldung: bar.querySelector('[name=verschuldung]').value,
       rechtsform: bar.querySelector('[name=rechtsform]').value,
       q: bar.querySelector('[name=q]').value.trim(),
       sort: cur.sort, dir: cur.dir,
@@ -1178,6 +1194,8 @@ async function loadScreener(f) {
   const params = new URLSearchParams({ band: f.band, sort: f.sort, dir: f.dir });
   if (f.bl) params.set('bundesland', f.bl);
   if (f.konzern) params.set('konzern', f.konzern);
+  if (f.cash) params.set('cash', f.cash);
+  if (f.verschuldung) params.set('verschuldung', f.verschuldung);
   if (f.rechtsform) params.set('rechtsform', f.rechtsform);
   if (f.q) params.set('q', f.q);
   els.screener.querySelector('.screener-export').href = `/api/screen.csv?${params}`;
@@ -1216,17 +1234,23 @@ function renderScreenRow(r) {
       td.className = 'screener-firm';
       td.innerHTML = '<span class="sf-name"></span><span class="sf-sub"></span>';
       td.querySelector('.sf-name').textContent = r.name || r.id;
-      td.querySelector('.sf-sub').textContent = [`FN ${r.id}`, r.ort, r.rechtsform].filter(Boolean).join(' · ');
-      if (r.konzern) {
+      const ort = r.ort && r.bundesland && r.ort !== r.bundesland ? `${r.ort} (${r.bundesland})` : r.ort || r.bundesland;
+      td.querySelector('.sf-sub').textContent = [`FN ${r.id}`, ort, r.rechtsform].filter(Boolean).join(' · ');
+      const badges = [
+        [r.konzern, 'Konzern', 'Hat einen Konzernabschluss eingereicht'],
+        [r.verflechtung, 'Konzernbezug', 'Hoher Saldo gegenüber verbundenen Unternehmen/Gesellschaftern (Cash-Pooling, Konzerndarlehen) — vermutlich Teil einer Gruppe'],
+        [r.holding, 'Holding?', 'Ergebnis überwiegend aus Beteiligungserträgen/Finanzerfolg'],
+      ];
+      for (const [on, text, title] of badges) {
+        if (!on) continue;
         const b = document.createElement('span');
         b.className = 'sf-badge';
-        b.textContent = 'Konzern';
-        b.title = 'Hat einen Konzernabschluss eingereicht';
+        b.textContent = text;
+        b.title = title;
         td.querySelector('.sf-name').append(' ', b);
       }
       return td;
     },
-    () => textCell(r.bundesland || '—'),
     () => textCell((r.stichtag || '').slice(0, 4) || '—', 'yr'),
     () => textCell(r.umsatz != null ? fmtEur(r.umsatz) : r.rohergebnis != null ? `R ${fmtEur(r.rohergebnis)}` : '—', 'num'),
     () => textCell(fmtEur2(r.ebitda), 'num strong'),
@@ -1236,7 +1260,9 @@ function renderScreenRow(r) {
       return td;
     },
     () => textCell(r.umsatz ? fmtPct(r.ebitda / r.umsatz) : '—', 'num'),
-    () => textCell(fmtEur(r.bilanzsumme), 'num'),
+    () => cashCell(fmtEur2(r.fcf_operativ), r),
+    () => cashCell(r.cash_conversion == null ? '—' : r.cash_conversion > 1.5 ? '> 150 %' : `${(r.cash_conversion * 100).toFixed(0)} %`, r),
+    () => textCell(r.net_debt == null ? '—' : r.net_debt <= 0 ? 'Nettocash' : r.net_debt_ebitda != null ? `${r.net_debt_ebitda.toFixed(1).replace('.', ',')}×` : fmtEur(r.net_debt), 'num'),
     () => textCell(fmtPct(r.ek_quote), 'num'),
     () => {
       const td = textCell([r.gfCount ? `${r.gfCount} GF` : null, r.prokuraCount ? `${r.prokuraCount} PR` : null].filter(Boolean).join(' · ') || '—');
@@ -1246,6 +1272,19 @@ function renderScreenRow(r) {
   ];
   for (const make of cells) tr.appendChild(make());
   return tr;
+}
+
+// Cash-flow figures carry the engine's caveats as a "?" with tooltip.
+function cashCell(text, r) {
+  const td = textCell(text, 'num');
+  const notes = [...(r.cfWarnings || [])];
+  if (r.cf_quality === 'pruefen') notes.unshift('Gegenprobe über die Finanzierungsseite geht nicht auf (> 5 % der Bilanzsumme)');
+  const relevant = notes.filter((n) => !n.startsWith('keine Finanzschulden'));
+  if (relevant.length && text !== '—') {
+    td.classList.add('flag');
+    td.title = relevant.join('\n');
+  }
+  return td;
 }
 
 function textCell(text, cls = '') {

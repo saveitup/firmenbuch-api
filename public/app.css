@@ -1046,7 +1046,7 @@ main, header, footer { position: relative; z-index: 1; }
 .screener-export:hover { border-color: var(--accent); color: var(--accent); }
 .screener-bar {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(0, 1.4fr);
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
   gap: var(--space-3);
   padding: var(--space-4) var(--space-5);
   border-bottom: 1px solid var(--line);
@@ -1106,3 +1106,5 @@ main, header, footer { position: relative; z-index: 1; }
   .screener-q { grid-column: 1 / -1; }
   .screener-head { flex-direction: column; }
 }
+.screener-table td.flag::after { content: " ?"; color: var(--warn); font-weight: 600; }
+.screener-table td.flag { cursor: help; }

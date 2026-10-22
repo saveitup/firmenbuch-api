@@ -366,6 +366,31 @@ lösen kein FLAG aus.
 zur publizierten Geldflussrechnung in ≥ 80 % von 15–20 Großfirmen;
 EBITDA-Schätzer-Fehlerband gemessen und in der UI angezeigt.
 
+**Stand 22.10.2026 — Cashflow-Engine umgesetzt:**
+- **Code:** `server/analytics/cashflow.js`, `cashflow_yearly`,
+  `npm run compute:at-cashflow` (aus dem gespeicherten XML, ohne IWG-Calls).
+  Unit-Checks in `scripts/check-cashflow.mjs`, Teil von `npm run check:jab`.
+- **Kennzahlen:** CFO, CapEx, FCF gesamt, **FCF operativ** (EBIT × 0,77 +
+  AfA + ΔRückst − ΔNWC − CapEx; ohne Finanzerfolg), Cash Conversion =
+  FCF operativ / EBITDA, Net Debt (Bank + Anleihen − Kasse − Wertpapiere),
+  Konzernsaldo, Netto-Ausschüttung.
+- **Gegenprobe** über die Finanzierungsseite: schließt bei 6 837 von 7 284
+  Firmen (94 %). Markiert werden außerdem Strukturbrüche (Bilanzsumme > 5×),
+  Holdings, Konzernbezug (Konzernsaldo > 20 % der Bilanzsumme) und einmalige
+  Working-Capital-Effekte.
+- **Parser-Fixes aus dem Lauf:**
+  - Bank-/Konzern-Verbindlichkeiten und Konzernforderungen werden einzeln
+    gelesen (auch bei „nicht ausweispflichtigem Rest“)
+  - falsch deklarierte Vorjahres-Einheit wird erkannt (3 Fälle, nur
+    TEUR → EUR); `--reparse` hat die DB nachgezogen
+- **Kernband:** 75 % FCF positiv, Median Cash Conversion ≈ 0,5–0,7,
+  64 % Nettocash.
+- **Offen:**
+  - Validierung gegen publizierte Geldflussrechnungen (stecken in den
+    Lagebericht-PDFs)
+  - Mehrjahres-FCF (je Firma ein älterer Abschluss = zwei weitere Jahre)
+  - EBITDA-/Umsatz-Schätzer
+
 ### Phase 4 — Cluster-Zuordnung (A1–B3)
 
 1. **Vorfilter ÖNACE 2025** aus dem Geschäftszweig (= Tiefenstufe 0: Claude,

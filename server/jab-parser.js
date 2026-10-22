@@ -67,6 +67,20 @@ function sectionAmount(root, names, mul, col = 'BETRAG_GJ') {
   return node ? mul(topBetrag(node, col)) : null;
 }
 
+// Some filings declare the Vorjahr column in TEUR but enter euros. If the
+// declared scale puts the prior-year Bilanzsumme more than 20× away from the
+// current one and a smaller scale fits, use that. Only downward: a tiny prior
+// year under a declared "E" is usually real (Neugründung, Umgründung), and
+// scaling it up would invent numbers. Returns [scale, corrected].
+const MAX_MISFIT = Math.log10(20);
+function checkedVjScale(currentTotal, rawPriorTotal, declared) {
+  if (!currentTotal || !rawPriorTotal) return [declared, false];
+  const misfit = (s) => Math.abs(Math.log10(Math.abs(rawPriorTotal * s / currentTotal)));
+  if (misfit(declared) < MAX_MISFIT) return [declared, false];
+  const fitting = [1, 1000].filter((s) => s < declared && misfit(s) < MAX_MISFIT);
+  return fitting.length ? [fitting.sort((a, b) => misfit(a) - misfit(b))[0], true] : [declared, false];
+}
+
 // EBITDA = Betriebserfolg + Abschreibungen. Abschreibungen are an expense
 // whatever sign the filing software used, so add back the absolute value.
 function ebitdaOf(guv) {
@@ -123,10 +137,13 @@ export function parseJAb(xmlText) {
   // EINGABEDARSTELLUNG (how the numbers were entered) matters for scaling —
   // ZIELDARSTELLUNG is a display hint and may say TE for euro values.
   const vorhergehend = gj.EINGABEDARSTELLUNG?.DARSTELLUNG_VORHERGEHEND || {};
-  const scaleVj = SCALE[vorhergehend.EINHEIT] ?? 1;
+  const aktivaNode = walk(envelope, 'AKTIVA');
+  const [scaleVj, vjCorrected] = checkedVjScale(
+    mul(topBetrag(aktivaNode)), topBetrag(aktivaNode, 'BETRAG_VJ'), SCALE[vorhergehend.EINHEIT] ?? 1);
   const mulVj = (x) => x == null ? null : x * scaleVj;
   const priorStichtag = ag.GESCHAEFTSJAHR_VORANGEGANGEN?.ENDE || null;
   const prior = priorStichtag ? v4Year(envelope, mulVj, 'BETRAG_VJ') : null;
+  if (prior && vjCorrected) prior.einheitKorrigiert = true;
 
   const firma = ag.FIRMENDATEN || {};
   const wortlaut = firma.FIRMENWORTLAUT?.ZEILE;
@@ -256,6 +273,13 @@ function extractBalanceSheet(aktiva, passiva, mul, col = 'BETRAG_GJ') {
         total:       top(umlaufNode),
         vorraete:    amount(umlaufNode, ['VORRAETE']),
         forderungen: amount(umlaufNode, ['FORDERUNGEN_UND_SONSTIGE_VERMOEGENSGEGENSTAENDE', 'FORDERUNGEN']),
+        // Breakdown used by analytics/cashflow.js. Mittelgroße filers lump the
+        // rest into FORDERUNGEN_NICHT_AUSWEISPFLICHTIGER_REST but must show
+        // the group positions separately.
+        forderungenLL:          amount(umlaufNode, ['FORDERUNGEN_AUS_LIEFERUNGEN_UND_LEISTUNGEN']),
+        forderungenVerbundene:  amount(umlaufNode, ['FORDERUNGEN_GEGENUEBER_VERBUNDENEN_UNTERNEHMEN']),
+        forderungenBeteiligung: amount(umlaufNode, ['FORDERUNGEN_GEGENUEBER_UNTERNEHMEN_MIT_BETEILIGUNGSVERHAELTNIS',
+                                                    'FORDERUNGEN_GEGENUEBER_UNTERNEHMEN_MIT_DENEN_EIN_BETEILIGUNGSVERHAELTNIS_BESTEHT']),
         wertpapiere: amount(umlaufNode, ['WERTPAPIERE_UND_ANTEILE', 'WERTPAPIERE']),
         kassenbestand: amount(umlaufNode, ['KASSENBESTAND_SCHECKS_GUTHABEN_BEI_KREDITINSTITUTEN', 'KASSENBESTAND']),
       },
@@ -279,6 +303,15 @@ function extractBalanceSheet(aktiva, passiva, mul, col = 'BETRAG_GJ') {
       verbindlichkeiten: {
         total:       top(verbindNode),
         langfristig: verbindLangfristig,
+        // Financing and group positions are shown separately even by
+        // mittelgroße filers; the operating rest is total minus these.
+        anleihen:              amount(verbindNode, ['ANLEIHEN']),
+        kreditinstitute:       amount(verbindNode, ['VERBINDLICHKEITEN_GEGENUEBER_KREDITINSTITUTEN']),
+        lieferungenLeistungen: amount(verbindNode, ['VERBINDLICHKEITEN_AUS_LIEFERUNGEN_UND_LEISTUNGEN']),
+        verbundene:            amount(verbindNode, ['VERBINDLICHKEITEN_GEGENUEBER_VERBUNDENEN_UNTERNEHMEN']),
+        beteiligung:           amount(verbindNode, ['VERBINDLICHKEITEN_GEGENUEBER_UNTERNEHMEN_MIT_BETEILIGUNGSVERHAELTNIS',
+                                                    'VERBINDLICHKEITEN_GEGENUEBER_UNTERNEHMEN_MIT_DENEN_EIN_BETEILIGUNGSVERHAELTNIS_BESTEHT']),
+        gesellschafter:        amount(verbindNode, ['VERBINDLICHKEITEN_GEGENUEBER_GESELLSCHAFTERN']),
       },
       rechnungsabgrenzung: passivaRechAbgr && passivaRechAbgr !== aktivaRechAbgr ? top(passivaRechAbgr) : null,
     },
@@ -358,9 +391,12 @@ function parseBmfLegacy(xmlText) {
 
   if (!walk(gl, 'HGB_224_2') && !walk(gl, 'HGB_224_3')) return null;
 
-  const vjScale = allg.VOR_GJ?.WERT_TSD === 'j' ? 1000 : 1;
+  const aktivaNode = walk(gl, 'HGB_224_2');
+  const [vjScale, vjCorrected] = checkedVjScale(
+    bmfAmount(aktivaNode), bmfAmount(aktivaNode, 'BETRAG_VJ'), allg.VOR_GJ?.WERT_TSD === 'j' ? 1000 : 1);
   const priorStichtag = allg.VOR_GJ?.ENDE || null;
   const prior = priorStichtag ? bmfYear(gl, (x) => x == null ? null : x * vjScale, 'BETRAG_VJ') : null;
+  if (prior && vjCorrected) prior.einheitKorrigiert = true;
 
   const name = allg.FIRMA?.F_NAME?.Z;
   return {
@@ -420,6 +456,10 @@ function bmfYear(gl, mul, col) {
         total:         amount(umlauf),
         vorraete:      umlauf && amount(walk(umlauf, 'HGB_224_2_B_I')),
         forderungen:   umlauf && amount(walk(umlauf, 'HGB_224_2_B_II')),
+        // §224 Abs 2 B.II: 1 L+L, 2 verbundene Unternehmen, 3 Beteiligungsverhältnis.
+        forderungenLL:          umlauf && amount(walk(umlauf, 'HGB_224_2_B_II_1')),
+        forderungenVerbundene:  umlauf && amount(walk(umlauf, 'HGB_224_2_B_II_2')),
+        forderungenBeteiligung: umlauf && amount(walk(umlauf, 'HGB_224_2_B_II_3')),
         wertpapiere:   umlauf && amount(walk(umlauf, 'HGB_224_2_B_III')),
         kassenbestand: umlauf && amount(walk(umlauf, 'HGB_224_2_B_IV')),
       },
@@ -442,6 +482,14 @@ function bmfYear(gl, mul, col) {
       verbindlichkeiten: {
         total: amount(verb),
         langfristig: null, // BMF legacy doesn't break out Restlaufzeit at this level
+        // §224 Abs 3 D: 1 Anleihen, 2 Kreditinstitute, 4 L+L, 6 verbundene
+        // Unternehmen, 7 Beteiligungsverhältnis.
+        anleihen:              verb && amount(walk(verb, 'HGB_224_3_D_1')),
+        kreditinstitute:       verb && amount(walk(verb, 'HGB_224_3_D_2')),
+        lieferungenLeistungen: verb && amount(walk(verb, 'HGB_224_3_D_4')),
+        verbundene:            verb && amount(walk(verb, 'HGB_224_3_D_6')),
+        beteiligung:           verb && amount(walk(verb, 'HGB_224_3_D_7')),
+        gesellschafter:        null,
       },
       rechnungsabgrenzung: amount(rap_pas),
     },

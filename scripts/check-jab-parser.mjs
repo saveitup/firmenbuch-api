@@ -30,6 +30,9 @@ const BASELINE_PATH = 'node_modules/.cache/kontur/jab-parser.head.mjs';
 // Fields the BMF-GuV change is allowed to fill in or correct.
 const EXPECTED_CHANGES = new Set(['umsatzerloese', 'betriebsergebnis', 'jahresergebnis']);
 const NEW_FIELDS = new Set(['guv', 'priorYear', 'filing']);
+// Balance-sheet lines added after git HEAD (debt / receivables breakdown).
+const NEW_LEAVES = new Set(['forderungenLL', 'forderungenVerbundene', 'forderungenBeteiligung',
+  'anleihen', 'kreditinstitute', 'lieferungenLeistungen', 'verbundene', 'beteiligung', 'gesellschafter']);
 
 function loadBaseline() {
   mkdirSync(path.dirname(BASELINE_PATH), { recursive: true });
@@ -109,7 +112,9 @@ for (const f of files) {
     else problems.push(`regression ${field}: ${oldVal} → ${b[field]}`);
   }
   for (const field of Object.keys(b)) {
-    if (!(field in a) && !NEW_FIELDS.has(field.split('.')[0])) problems.push(`unexpected new field ${field}`);
+    if (!(field in a) && !NEW_FIELDS.has(field.split('.')[0]) && !NEW_LEAVES.has(field.split('.').pop())) {
+      problems.push(`unexpected new field ${field}`);
+    }
   }
 
   // 2. GuV identities
