@@ -55,13 +55,21 @@ const BASE_SQL = `
            THEN json_extract(f.guv_json, '$.ebitda') * 1.0 / json_extract(v.guv_json, '$.ebitda') - 1 END AS ebitda_wachstum,
       c.legal_form_text                                 AS rechtsform_text,
       cf.fcf                                            AS fcf,
-      cf.fcf_operativ                                   AS fcf_operativ,
+      -- Screen values: median over the usable years (up to three) where the
+      -- summary exists, else the latest single year.
+      COALESCE(s.fcf_operativ_median, cf.fcf_operativ)  AS fcf_operativ,
+      cf.fcf_operativ                                   AS fcf_operativ_1j,
+      COALESCE(s.years, 0)                              AS cf_years,
+      s.fcf_positiv_jahre                               AS fcf_positiv_jahre,
+      s.cash_conversion_kumuliert                       AS cash_conversion_kumuliert,
+      s.jahre_json                                      AS cf_jahre_json,
       -- Result driven by dividends/interest rather than operations.
       CASE WHEN json_extract(f.guv_json, '$.finanzerfolg') > MAX(COALESCE(json_extract(f.guv_json, '$.betriebserfolg'), 0), 0)
            THEN 1 ELSE 0 END                            AS holding,
       cf.cfo                                            AS cfo,
       cf.capex                                          AS capex,
-      cf.cash_conversion                                AS cash_conversion,
+      COALESCE(s.cash_conversion_median, cf.cash_conversion) AS cash_conversion,
+      cf.cash_conversion                                AS cash_conversion_1j,
       cf.net_debt                                       AS net_debt,
       cf.net_debt_ebitda                                AS net_debt_ebitda,
       cf.konzernsaldo                                   AS konzernsaldo,
@@ -75,6 +83,7 @@ const BASE_SQL = `
     LEFT JOIN ranked v ON v.national_id_canon = f.national_id_canon AND v.rn = 2
     LEFT JOIN at_company_profile p ON p.national_id_canon = f.national_id_canon
     LEFT JOIN cashflow_yearly cf ON cf.country = 'AT' AND cf.national_id_canon = f.national_id_canon AND cf.stichtag = f.stichtag
+    LEFT JOIN cashflow_summary s ON s.country = 'AT' AND s.national_id_canon = f.national_id_canon
     WHERE f.rn = 1
   )
   SELECT * FROM rows
@@ -96,9 +105,11 @@ export function screenAt(params = {}) {
   // "unabhängig": no Konzernabschluss, no large group balance, not a holding.
   if (params.konzern === 'unabhaengig') where.push('konzern = 0 AND verflechtung = 0 AND holding = 0');
   if (params.konzern === 'nur') where.push('konzern = 1');
-  // Cash filters only trust years whose financing-side cross-check closes.
-  if (params.cash === 'fcf') where.push("fcf_operativ > 0 AND cf_quality = 'ok'");
-  if (params.cash === 'cc50') where.push("cash_conversion >= 0.5 AND cf_quality = 'ok'");
+  // Cash filters only trust years whose financing-side cross-check closes
+  // (cf_years counts exactly those).
+  if (params.cash === 'fcf') where.push('cf_years >= 1 AND fcf_operativ > 0');
+  if (params.cash === 'cc50') where.push('cf_years >= 1 AND cash_conversion >= 0.5');
+  if (params.cash === 'stetig') where.push('cf_years >= 2 AND fcf_positiv_jahre = cf_years');
   if (params.verschuldung === 'nettocash') where.push('net_debt <= 0');
   if (params.verschuldung === 'max1') where.push('net_debt_ebitda <= 1');
   if (params.verschuldung === 'max2') where.push('net_debt_ebitda <= 2');
@@ -133,15 +144,17 @@ function withOrgane(r) {
   try { organe = r.organe_json ? JSON.parse(r.organe_json) : []; } catch {}
   const gf = organe.filter((o) => o.roleCode === 'GF' || o.roleCode === 'VM' || o.roleCode === 'KP');
   const jahrgaenge = gf.map((o) => o.geburtsjahr).filter(Boolean);
-  let cfWarnings = [];
+  let cfWarnings = [], cfJahre = [];
   try { cfWarnings = r.cf_warnings_json ? JSON.parse(r.cf_warnings_json) : []; } catch {}
-  const { organe_json, cf_warnings_json, ...rest } = r;
+  try { cfJahre = r.cf_jahre_json ? JSON.parse(r.cf_jahre_json) : []; } catch {}
+  const { organe_json, cf_warnings_json, cf_jahre_json, ...rest } = r;
   return {
     ...rest,
     konzern: !!r.konzern,
     verflechtung: !!r.verflechtung,
     holding: !!r.holding,
     cfWarnings,
+    cfJahre,
     gfCount: gf.length,
     prokuraCount: organe.filter((o) => o.roleCode === 'PR').length,
     aeltesterGfJahrgang: jahrgaenge.length ? Math.min(...jahrgaenge) : null,
@@ -169,8 +182,11 @@ const CSV_COLUMNS = [
   ['stichtag', 'Stichtag'], ['umsatz', 'Umsatz'], ['rohergebnis', 'Rohergebnis'], ['ebitda', 'EBITDA'],
   ['ebitda_vj', 'EBITDA Vorjahr'], ['ebit', 'Betriebserfolg'], ['jahresergebnis', 'Jahresergebnis'],
   ['bilanzsumme', 'Bilanzsumme'], ['eigenkapital', 'Eigenkapital'], ['ek_quote', 'EK-Quote'],
-  ['cfo', 'Operativer Cashflow'], ['capex', 'CapEx'], ['fcf_operativ', 'FCF operativ'], ['fcf', 'FCF gesamt'],
-  ['cash_conversion', 'Cash Conversion'], ['net_debt', 'Net Debt'], ['net_debt_ebitda', 'Net Debt / EBITDA'],
+  ['cf_years', 'Cashflow-Jahre'], ['fcf_operativ', 'FCF operativ (Median)'], ['cash_conversion', 'Cash Conversion (Median)'],
+  ['cash_conversion_kumuliert', 'Cash Conversion kumuliert'], ['fcf_positiv_jahre', 'Jahre FCF positiv'],
+  ['cfo', 'Operativer Cashflow (letztes GJ)'], ['capex', 'CapEx (letztes GJ)'], ['fcf_operativ_1j', 'FCF operativ (letztes GJ)'],
+  ['cash_conversion_1j', 'Cash Conversion (letztes GJ)'], ['fcf', 'FCF gesamt (letztes GJ)'],
+  ['net_debt', 'Net Debt'], ['net_debt_ebitda', 'Net Debt / EBITDA'],
   ['konzernsaldo', 'Konzernsaldo'], ['cf_quality', 'Cashflow-Gegenprobe'],
   ['konzern', 'Konzernabschluss'], ['verflechtung', 'Konzernbezug'], ['holding', 'Holding?'],
   ['gfCount', 'GF'], ['prokuraCount', 'Prokura'],

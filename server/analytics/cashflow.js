@@ -142,3 +142,61 @@ export function computeCashflow(cur, prior) {
     warnings,
   };
 }
+
+// ─── Multi-year series ──────────────────────────────────────────────────
+// `filings`: [{ docKey, row }] — parsed Jahresabschlüsse of one firm. Each
+// filing yields its own year (balance sheet + Vorjahr column). A year that
+// no filing covers on its own — the Vorjahr of a newer filing whose
+// predecessor balance sheet sits in an older filing — is bridged across the
+// two documents and marked as such.
+export function cashflowSeries(filings) {
+  const byYear = new Map();
+  for (const { docKey, row } of filings) {
+    const cf = row && computeCashflow(row, row.priorYear);
+    if (cf) byYear.set(cf.stichtag, { ...cf, sourceRef: docKey });
+  }
+  for (const { docKey, row } of filings) {
+    const p = row?.priorYear;
+    if (!p?.balanceSheet || byYear.has(p.stichtag)) continue;
+    const older = filings.find((f) => f.row?.balanceSheet && monthsBetween(f.row.stichtag, p.stichtag) === 12);
+    if (!older) continue;
+    const cf = computeCashflow(
+      { stichtag: p.stichtag, balanceSheet: p.balanceSheet, guv: p.guv, jahresergebnis: p.jahresergebnis },
+      { stichtag: older.row.stichtag, balanceSheet: older.row.balanceSheet },
+    );
+    if (!cf) continue;
+    cf.warnings.push('aus zwei Abschlüssen abgeleitet (Vorjahresspalte + älterer Abschluss)');
+    byYear.set(cf.stichtag, { ...cf, sourceRef: `${docKey}+${older.docKey}` });
+  }
+  return [...byYear.values()].sort((a, b) => b.stichtag.localeCompare(a.stichtag));
+}
+
+const median = (xs) => {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b), m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+// Aggregate over the most recent `maxYears` fiscal years (by Stichtag,
+// newest first). Only years whose financing-side cross-check closes count.
+export function summarizeCashflows(series, maxYears = 3) {
+  if (!series.length) return null;
+  const newest = series[0].stichtag;
+  const window = series.filter((cf) => monthsBetween(cf.stichtag, newest) < maxYears * 12);
+  const ok = window.filter((cf) => cf.quality === 'ok' && cf.fcfOperativ != null);
+  const ebitdaSum = ok.reduce((s, cf) => s + (cf.ebitda > 0 ? cf.ebitda : 0), 0);
+  return {
+    years: ok.length,
+    vonStichtag: ok.length ? ok[ok.length - 1].stichtag : null,
+    bisStichtag: ok.length ? ok[0].stichtag : null,
+    fcfOperativMedian: median(ok.map((cf) => cf.fcfOperativ)),
+    cashConversionMedian: median(ok.map((cf) => cf.cashConversion).filter((x) => x != null)),
+    cashConversionKumuliert: ebitdaSum > 0 ? ok.reduce((s, cf) => s + cf.fcfOperativ, 0) / ebitdaSum : null,
+    fcfPositivJahre: ok.filter((cf) => cf.fcfOperativ > 0).length,
+    ebitdaMedian: median(ok.map((cf) => cf.ebitda).filter((x) => x != null)),
+    jahre: window.map((cf) => ({
+      stichtag: cf.stichtag, fcfOperativ: cf.fcfOperativ, cashConversion: cf.cashConversion,
+      ebitda: cf.ebitda, quality: cf.quality, zweiAbschluesse: String(cf.sourceRef || '').includes('+'),
+    })),
+  };
+}

@@ -2,7 +2,7 @@
 // Unit checks for server/analytics/cashflow.js on hand-computed examples.
 // Usage: node scripts/check-cashflow.mjs        (exit code 1 on failure)
 
-import { computeCashflow } from '../server/analytics/cashflow.js';
+import { computeCashflow, cashflowSeries, summarizeCashflows } from '../server/analytics/cashflow.js';
 
 let failures = 0;
 const eq = (actual, expected, label, tol = 0.01) => {
@@ -125,6 +125,28 @@ eq(rG.warnings.some((w) => w.startsWith('Strukturbruch')) ? 1 : 0, 1, 'Warnung S
 const rE = computeCashflow({ ...cur, stichtag: '2025-06-30' }, prior);
 console.log('\nBeispiel E — Rumpfgeschäftsjahr');
 eq(rE.warnings.some((w) => w.includes('6 statt 12')) ? 1 : 0, 1, 'Warnung Rumpf-GJ');
+
+// Example H — multi-year series: latest filing (2025 + Vorjahr 2024) and an
+// older one (2023 + Vorjahr 2022). 2024 is bridged across both documents.
+const bs2022 = prior.balanceSheet;
+const bs2023 = cur.balanceSheet;   // same figures as example A, one year earlier
+const filingOld = { docKey: 'OLD', row: { stichtag: '2023-12-31', balanceSheet: bs2023, guv: cur.guv,
+  priorYear: { stichtag: '2022-12-31', balanceSheet: bs2022 } } };
+const bs2024 = structuredClone(bs2023);  // flat year: nothing changes, FCF op = EBIT·0,77 + AfA − CapEx(=AfA)
+const bs2025 = structuredClone(bs2023);
+const filingNew = { docKey: 'NEW', row: { stichtag: '2025-12-31', balanceSheet: bs2025, guv: { ...cur.guv, jahresueberschuss: 0 },
+  priorYear: { stichtag: '2024-12-31', balanceSheet: bs2024, guv: { ...cur.guv, jahresueberschuss: 0 } } } };
+const series = cashflowSeries([filingNew, filingOld]);
+console.log('\nBeispiel H — Mehrjahresreihe aus zwei Abschlüssen');
+eq(series.length, 3, 'drei Cashflow-Jahre (2025, 2024, 2023)');
+eq(series[1].stichtag === '2024-12-31' && series[1].sourceRef === 'NEW+OLD' ? 1 : 0, 1, '2024 über beide Abschlüsse');
+const sum = summarizeCashflows(series);
+// 2025/2024 flat: FCF op = 140·0,77 + 60 − 60 = 107,8 ; 2023 = 57,8 (example A) → median 107,8
+eq(sum.years, 3, 'drei belastbare Jahre');
+eq(sum.fcfOperativMedian, 107.8, 'Median FCF operativ');
+eq(sum.cashConversionMedian, 0.539, 'Median Cash Conversion', 0.001);
+eq(sum.cashConversionKumuliert, (107.8 * 2 + 57.8) / 600, 'Cash Conversion kumuliert', 0.001);
+eq(sum.fcfPositivJahre, 3, 'FCF in allen Jahren positiv');
 
 console.log(failures ? `\n✗ ${failures} Problem(e)` : '\n✓ alle Cashflow-Prüfungen bestanden');
 process.exit(failures ? 1 : 0);

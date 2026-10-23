@@ -160,8 +160,9 @@ CREATE INDEX IF NOT EXISTS idx_atprofile_bundesland ON at_company_profile(bundes
 CREATE TABLE IF NOT EXISTS at_jab_ingest (
   doc_key            TEXT PRIMARY KEY,
   national_id_canon  TEXT NOT NULL,
-  status             TEXT NOT NULL,                    -- ok | no-data | error
+  status             TEXT NOT NULL,                    -- ok | no-data | not-found | error
   error              TEXT,
+  role               TEXT NOT NULL DEFAULT 'latest',   -- latest | history (older filing for multi-year cash flow)
   ingested_at        TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -196,4 +197,23 @@ CREATE TABLE IF NOT EXISTS cashflow_yearly (
   warnings_json        TEXT,
   computed_at          TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (country, national_id_canon, stichtag)
+);
+
+-- Multi-year cash-flow summary per firm (analytics/cashflow.js
+-- summarizeCashflows): up to three most recent fiscal years, only years
+-- whose financing-side cross-check closes. Rebuilt by scripts/at-cashflow.mjs.
+CREATE TABLE IF NOT EXISTS cashflow_summary (
+  country                    TEXT NOT NULL,
+  national_id_canon          TEXT NOT NULL,
+  years                      INTEGER NOT NULL,      -- usable cash-flow years (0–3)
+  von_stichtag               TEXT,
+  bis_stichtag               TEXT,
+  fcf_operativ_median        REAL,
+  cash_conversion_median     REAL,
+  cash_conversion_kumuliert  REAL,                  -- Σ FCF operativ / Σ EBITDA
+  fcf_positiv_jahre          INTEGER,
+  ebitda_median              REAL,
+  jahre_json                 TEXT,                  -- [{stichtag, fcfOperativ, cashConversion, ebitda, quality, zweiAbschluesse}]
+  computed_at                TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (country, national_id_canon)
 );

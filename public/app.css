@@ -1108,3 +1108,4 @@ main, header, footer { position: relative; z-index: 1; }
 }
 .screener-table td.flag::after { content: " ?"; color: var(--warn); font-weight: 600; }
 .screener-table td.flag { cursor: help; }
+.screener-table td .cf-years { color: var(--muted-2); font-size: var(--text-xs); font-weight: 400; }

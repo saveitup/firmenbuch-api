@@ -15,6 +15,7 @@
 //   npm run ingest:at-jab -- --retry-errors
 //   npm run ingest:at-jab -- --restrip            # re-strip stored XMLs, no IWG calls
 //   npm run ingest:at-jab -- --reparse            # re-parse stored XMLs into the DB, no IWG calls
+//   npm run ingest:at-jab -- --history            # core band: also the filing two years older
 //
 // Run scripts/at-universe.mjs first. Idempotent: processed documents are
 // recorded in at_jab_ingest and skipped on re-runs.
@@ -123,23 +124,45 @@ if (args.reparse) {
   process.exit(0);
 }
 
-const todo = db.prepare(`
+const ROLE = args.history ? 'history' : 'latest';
+const retry = args['retry-errors'] ? "AND i.status <> 'error'" : '';
+const limit = args.limit ? `LIMIT ${Number(args.limit)}` : '';
+
+// `--history`: firms in the EBITDA core band (latest filing) also get the
+// filing two years older. Its Vorjahr column adds a fourth balance sheet,
+// so three cash-flow years result (see scripts/at-cashflow.mjs).
+const todo = args.history ? db.prepare(`
+  WITH latest AS (
+    SELECT f.national_id_canon AS canon, f.stichtag, f.source_ref AS latestKey, json_extract(f.guv_json, '$.ebitda') AS ebitda,
+           ROW_NUMBER() OVER (PARTITION BY f.national_id_canon ORDER BY f.stichtag DESC) AS rn
+    FROM financials_yearly f
+    WHERE f.country = 'AT'
+      AND f.source_ref IN (SELECT doc_key FROM at_jab_ingest WHERE status = 'ok' AND role = 'latest')
+  )
+  SELECT canon, stichtag, latestKey, 'history:' || canon AS docKey FROM latest
+  WHERE rn = 1 AND ebitda BETWEEN 1500000 AND 5000000
+    AND NOT EXISTS (SELECT 1 FROM at_jab_ingest i WHERE i.national_id_canon = latest.canon AND i.role = 'history' ${retry})
+  ORDER BY ebitda DESC
+  ${limit}
+`).all() : db.prepare(`
   SELECT u.national_id_canon AS canon, u.latest_jab_xml_key AS docKey
   FROM at_universe u
   WHERE u.latest_jab_xml_key IS NOT NULL
     ${args.scope === 'all' ? '' : 'AND u.prefilter_mittel_gross = 1'}
     AND NOT EXISTS (
       SELECT 1 FROM at_jab_ingest i
-      WHERE i.doc_key = u.latest_jab_xml_key ${args['retry-errors'] ? "AND i.status <> 'error'" : ''}
+      WHERE i.doc_key = u.latest_jab_xml_key ${retry}
     )
   ORDER BY u.last_jab_at DESC
-  ${args.limit ? `LIMIT ${Number(args.limit)}` : ''}
+  ${limit}
 `).all();
 
-const recordStatus = db.prepare(`
-  INSERT INTO at_jab_ingest (doc_key, national_id_canon, status, error) VALUES (?, ?, ?, ?)
-  ON CONFLICT(doc_key) DO UPDATE SET status = excluded.status, error = excluded.error, ingested_at = datetime('now')
+const recordStatusStmt = db.prepare(`
+  INSERT INTO at_jab_ingest (doc_key, national_id_canon, status, error, role) VALUES (?, ?, ?, ?, ?)
+  ON CONFLICT(doc_key) DO UPDATE SET status = excluded.status, error = excluded.error,
+    role = excluded.role, ingested_at = datetime('now')
 `);
+const recordStatus = { run: (docKey, canon, status, error) => recordStatusStmt.run(docKey, canon, status, error, ROLE) };
 const upsertProfile = db.prepare(`
   INSERT INTO at_company_profile (national_id_canon, plz, ort, bundesland, gemeindekennziffer,
     geschaeftszweig, homepage, rechtsform, ersterfassung, organe_json)
@@ -189,27 +212,66 @@ async function ingestOne({ canon, docKey }) {
   return 'ok';
 }
 
-log(`at-jab-ingest: ${todo.length} Firmen offen (scope=${args.scope || 'prefilter'}, concurrency=${CONCURRENCY})`);
-const counts = { ok: 0, 'no-data': 0, error: 0 };
+const addYears = (iso, n) => `${Number(iso.slice(0, 4)) + n}${iso.slice(4)}`;
+const monthsApart = (a, b) => Math.abs((Number(a.slice(0, 4)) - Number(b.slice(0, 4))) * 12 + Number(a.slice(5, 7)) - Number(b.slice(5, 7)));
+
+// Preferably the filing two years before the latest one (its Vorjahr column
+// gives a fourth balance sheet → three cash-flow years); older years are
+// often PDF-only, so otherwise the filing one year back (two years). The
+// document list often lacks the Stichtag but is ordered newest first, so an
+// undated entry is chosen by its position and checked after download.
+async function ingestHistory({ canon, stichtag, latestKey, docKey: placeholder }) {
+  const docs = await at.getDocuments(canon);
+  const latestIdx = docs.findIndex((d) => d.xmlKey === latestKey);
+  for (const yearsBack of [2, 1]) {
+    const target = addYears(stichtag, -yearsBack);
+    const dated = docs.find((d) => d.xmlKey && d.stichtag && monthsApart(d.stichtag, target) <= 3);
+    const byPosition = latestIdx >= 0 ? docs[latestIdx + yearsBack] : null;
+    const pick = dated || (byPosition?.xmlKey && !byPosition.stichtag ? byPosition : null);
+    if (!pick) continue;
+    const doc = await at.downloadDocument(pick.xmlKey);
+    const xml = doc?.bytes.toString('utf8');
+    const row = xml && parseJAb(xml);
+    if (!row || monthsApart(row.stichtag, target) > 3) continue;
+    return storeHistory(canon, placeholder, pick.xmlKey, xml, row);
+  }
+  recordStatus.run(placeholder, canon, 'not-found', `kein älterer XML-Abschluss (nur PDF?)`);
+  return 'not-found';
+}
+
+function storeHistory(canon, placeholder, docKey, xml, row) {
+  writeFileSync(path.join(RAW_DIR, `${docKey}.xml.gz`), zlib.gzipSync(stripLargeText(xml)));
+  db.transaction(() => {
+    upsertFinancials('AT', canon, [{ ...row, source_ref: docKey }]);
+    recordStatus.run(docKey, canon, 'ok', null);
+    // The placeholder only marks "searched, nothing found" — drop a stale one.
+    db.prepare('DELETE FROM at_jab_ingest WHERE doc_key = ?').run(placeholder);
+  })();
+  return 'ok';
+}
+
+const handler = args.history ? ingestHistory : ingestOne;
+log(`at-jab-ingest: ${todo.length} Firmen offen (${args.history ? 'history, Kernband' : `scope=${args.scope || 'prefilter'}`}, concurrency=${CONCURRENCY})`);
+const counts = { ok: 0, 'no-data': 0, 'not-found': 0, error: 0 };
 const t0 = Date.now();
 let next = 0;
 async function worker() {
   while (next < todo.length) {
     const item = todo[next++];
     try {
-      counts[await ingestOne(item)]++;
+      counts[await handler(item)]++;
     } catch (err) {
       counts.error++;
       recordStatus.run(item.docKey, item.canon, 'error', String(err.message).slice(0, 300));
     }
-    const done = counts.ok + counts['no-data'] + counts.error;
+    const done = Object.values(counts).reduce((s, n) => s + n, 0);
     if (done % 25 === 0 || done === todo.length) {
       const perMin = done / ((Date.now() - t0) / 60_000);
       const eta = perMin ? Math.round((todo.length - done) / perMin) : '?';
-      log(`[${done}/${todo.length}] ok=${counts.ok} no-data=${counts['no-data']} error=${counts.error}  ${perMin.toFixed(0)}/min  ETA ${eta} min`);
+      log(`[${done}/${todo.length}] ok=${counts.ok} no-data=${counts['no-data']} not-found=${counts['not-found']} error=${counts.error}  ${perMin.toFixed(0)}/min  ETA ${eta} min`);
     }
   }
 }
 await Promise.all(Array.from({ length: CONCURRENCY }, worker));
-log(`Fertig: ok=${counts.ok} no-data=${counts['no-data']} error=${counts.error}`);
+log(`Fertig: ok=${counts.ok} no-data=${counts['no-data']} not-found=${counts['not-found']} error=${counts.error}`);
 process.exit(counts.error ? 1 : 0);

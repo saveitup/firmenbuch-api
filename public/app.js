@@ -1073,8 +1073,8 @@ const SCREEN_COLUMNS = [
   ['ebitda', 'EBITDA', 'Betriebserfolg + Abschreibungen, wie berichtet (nicht normalisiert)', true],
   ['wachstum', 'Δ VJ', 'EBITDA-Veränderung gegenüber dem Vorjahr', true],
   [null, 'Marge', 'EBITDA / Umsatz — nur wenn der Umsatz ausgewiesen ist', true],
-  ['fcf', 'FCF op.', 'Operativer Free Cashflow nach Steuern, Investitionen und Working Capital, vor Zinsen und ohne Finanzerfolg (ein Geschäftsjahr)', true],
-  ['cash_conversion', 'Cash Conv.', 'FCF operativ / EBITDA — über 150 % meist einmaliger Working-Capital-Abbau', true],
+  ['fcf', 'FCF op.', 'Operativer Free Cashflow nach Steuern, Investitionen und Working Capital, vor Zinsen und ohne Finanzerfolg — Median der belastbaren Jahre (bis zu drei, „3J“); Einzeljahre im Tooltip', true],
+  ['cash_conversion', 'Cash Conv.', 'FCF operativ / EBITDA, Median der belastbaren Jahre — über 150 % meist einmaliger Working-Capital-Abbau', true],
   ['net_debt_ebitda', 'Net Debt', 'Nettoverschuldung (Bank + Anleihen − Kasse − Wertpapiere) in Vielfachen des EBITDA', true],
   ['ek_quote', 'EK-Quote', 'Eigenkapital / Bilanzsumme', true],
   [null, 'Organe', 'Geschäftsführung/Vorstand · Prokura (Kontext, kein Filter)', false],
@@ -1117,7 +1117,9 @@ function buildScreenerShell() {
         <option value="nur">nur mit Konzernabschluss</option>
       </select></label>
       <label><span>Free Cashflow</span><select name="cash">
-        <option value="">Alle</option><option value="fcf">FCF operativ positiv</option><option value="cc50">Cash Conversion ≥ 50 %</option>
+        <option value="">Alle</option><option value="fcf">FCF operativ positiv (Median)</option>
+        <option value="cc50">Cash Conversion ≥ 50 % (Median)</option>
+        <option value="stetig">FCF in allen Jahren positiv (≥ 2 J.)</option>
       </select></label>
       <label><span>Verschuldung</span><select name="verschuldung">
         <option value="">Alle</option><option value="nettocash">Nettocash</option>
@@ -1274,16 +1276,31 @@ function renderScreenRow(r) {
   return tr;
 }
 
-// Cash-flow figures carry the engine's caveats as a "?" with tooltip.
+// Cash-flow figures: median over the usable years with a "3J" marker; the
+// tooltip lists the single years and the latest year's caveats. "?" marks
+// values that rest on no year with a closing cross-check, or on a single
+// year with caveats.
 function cashCell(text, r) {
   const td = textCell(text, 'num');
-  const notes = [...(r.cfWarnings || [])];
-  if (r.cf_quality === 'pruefen') notes.unshift('Gegenprobe über die Finanzierungsseite geht nicht auf (> 5 % der Bilanzsumme)');
-  const relevant = notes.filter((n) => !n.startsWith('keine Finanzschulden'));
-  if (relevant.length && text !== '—') {
-    td.classList.add('flag');
-    td.title = relevant.join('\n');
+  if (text === '—') return td;
+  const years = r.cf_years || 0;
+  if (years) {
+    const tag = document.createElement('small');
+    tag.className = 'cf-years';
+    tag.textContent = ` ${years}J`;
+    td.appendChild(tag);
   }
+  const lines = (r.cfJahre || []).map((j) => `${(j.stichtag || '').slice(0, 4)}: FCF op. ${fmtEur2(j.fcfOperativ)} · Conversion ${
+    j.cashConversion == null ? '—' : `${Math.round(j.cashConversion * 100)} %`}${
+    j.quality !== 'ok' ? ' · Gegenprobe offen, nicht gezählt' : ''}${j.zweiAbschluesse ? ' · über zwei Abschlüsse' : ''}`);
+  const notes = (r.cfWarnings || []).filter((n) => !n.startsWith('keine Finanzschulden'));
+  if (r.cf_quality === 'pruefen') notes.unshift('Gegenprobe über die Finanzierungsseite geht nicht auf (> 5 % der Bilanzsumme)');
+  if (years === 0 || (years === 1 && notes.length)) td.classList.add('flag');
+  td.title = [
+    years ? `Median über ${years} ${years === 1 ? 'Jahr' : 'Jahre'}` : 'kein Jahr mit aufgehender Gegenprobe',
+    ...lines,
+    ...(notes.length ? ['', 'Letztes GJ:', ...notes] : []),
+  ].join('\n');
   return td;
 }
 
