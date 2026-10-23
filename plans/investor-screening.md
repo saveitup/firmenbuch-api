@@ -468,6 +468,26 @@ daher statt ÖNACE-Klassifikation per Claude ein Regel-Lexikon in
 
 **Exit:** ≥ 70 % der Qualified mit verifizierter Domain.
 
+**Status Discovery v1** (`server/web/discovery.js`, `npm run discover:at-web`,
+Tabelle `at_website`, Tests `npm run check:web`):
+- Kandidaten: Firmenbuch-Homepage (nur ~1 % der Firmen haben eine), dann
+  Domains aus dem Firmenwortlaut — erstes Namenswort, zwei Wörter, alle
+  Wörter, Initialen (Leobersdorfer Maschinenfabrik → lmf.at), Umlaut als
+  ae/a, TLDs .at/.com/.eu/.de, .co.at für die zwei wahrscheinlichsten Labels.
+  DNS-Vorprüfung, höchstens 8 erreichbare Domains und je 3 Unterseiten.
+- Abgleich: eigene FN (mit Prüfbuchstabe) auf Start- oder Impressumseite →
+  `fn`; andere gültige FN → Name/PLZ dieser FN lokal oder per
+  Kurzinformation, verwandt (gleiches Leitwort oder PLZ) → `gruppe`, sonst
+  Namensvetter (`andere_fn`, Domain wird nicht angezeigt); Name + PLZ ohne
+  FN → `name_plz`; 401/403/429/503 → `blockiert` (kein Umgehen von
+  Bot-Schutz).
+- robots.txt je Host, ≥ 1 s Abstand je Host, ehrlicher User-Agent.
+- Common Crawl liefert keine Volltextsuche nach FN, sondern nur URLs je
+  Domain — für die Discovery bringt es gegenüber DNS nichts. Der Hebel für
+  die nicht erratbaren Domains ist eine Such-API (Suche nach „FN 123456a“).
+- Grenzen: Impressum per JavaScript nachgeladen (z. B. Richter Pharma) →
+  nur Name + PLZ; Akronym-Domains, die nicht aus dem Namen folgen.
+
 ### Phase 6 — KI-Profil mit clusterabhängiger Tiefe
 
 Profile entstehen über die Claude Message Batches API mit Structured Outputs

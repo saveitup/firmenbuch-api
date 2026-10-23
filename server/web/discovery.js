@@ -67,7 +67,7 @@ const hostOf = (u) => { try { return new URL(/^https?:/i.test(u) ? u : `http://$
 const bareHost = (h) => (h || '').replace(/^www\./, '');
 
 /** Ordered candidate domains: Firmenbuch homepage first, then guesses × TLD. */
-export function domainCandidates({ name, homepage }, extra = []) {
+export function domainCandidates({ name, homepage }) {
   const out = [];
   const fb = homepage ? bareHost(hostOf(homepage)) : null;
   if (fb) out.push({ domain: fb, source: 'firmenbuch' });
@@ -78,9 +78,6 @@ export function domainCandidates({ name, homepage }, extra = []) {
       if (!out.some((c) => c.domain === domain)) out.push({ domain, source: 'domain' });
     }
   });
-  for (const domain of extra) {
-    if (!out.some((c) => c.domain === domain)) out.push({ domain, source: 'suche' });
-  }
   return out;
 }
 
@@ -308,6 +305,31 @@ export function createContext({ timeoutMs = TIMEOUT_MS } = {}) {
   return { resolves, page, get requests() { return requests; } };
 }
 
+// ─── Optional search API (Brave) ─────────────────────────────────────────
+// Only for firms whose domain cannot be guessed; needs BRAVE_API_KEY. The
+// FN is the query — it appears only on the firm's own Impressum and in
+// directories, which are dropped.
+const DIRECTORY_HOSTS = /(^|\.)(wko\.at|firmenabc\.at|herold\.at|northdata\.(de|com)|firmenbuchgrundbuch\.at|compnet\.at|firmeninfo\.at|unternehmen24\.info|cylex|infobel|dnb\.com|linkedin\.com|xing\.com|facebook\.com|instagram\.com|youtube\.com|wikipedia\.org|kununu\.com|karriere\.at|stepstone|indeed|meinbezirk\.at|derstandard\.at|diepresse\.com|ots\.at|trend\.at|google\.|bing\.|evi\.gv\.at|justiz\.gv\.at|firmen-?(db|verzeichnis))/i;
+let lastSearch = 0;
+
+export async function searchDomains({ canon, name, ort }, { key = process.env.BRAVE_API_KEY } = {}) {
+  if (!key) return [];
+  const wait = lastSearch + 1100 - Date.now();       // free tier: 1 query/s
+  lastSearch = Date.now() + Math.max(0, wait);
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  const fn = `${canon.slice(0, 6).replace(/^0+/, '')}${canon.slice(6)}`;
+  const q = `"FN ${fn}" OR "${name}" ${ort || ''} Impressum`.trim();
+  try {
+    const res = await fetch(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(q)}&country=at&count=10`, {
+      headers: { accept: 'application/json', 'x-subscription-token': key },
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const hosts = (data.web?.results || []).map((x) => bareHost(hostOf(x.url))).filter((h) => h && !DIRECTORY_HOSTS.test(h));
+    return [...new Set(hosts)].slice(0, 5);
+  } catch { return []; }
+}
+
 // ─── Discovery for one firm ──────────────────────────────────────────────
 
 async function homepageOf(ctx, domain) {
@@ -334,7 +356,11 @@ export async function discoverWebsite(ctx, firm) {
   let blocked = null;       // first candidate that refused the request
   let fetched = 0;
 
-  for (const cand of domainCandidates(f, firm.searchDomains || [])) {
+  // Search hits replace the guesses (those were already tried).
+  const list = firm.candidateDomains
+    ? firm.candidateDomains.map((domain) => ({ domain, source: 'suche' }))
+    : domainCandidates(f);
+  for (const cand of list) {
     if (fetched >= MAX_HTTP_DOMAINS) break;
     if (!(await ctx.resolves(cand.domain))) continue;     // no DNS: not even logged
     fetched++;

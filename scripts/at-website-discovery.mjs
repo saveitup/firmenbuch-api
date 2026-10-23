@@ -10,11 +10,13 @@
 //   --retry   also re-check 'nicht_gefunden' and 'fehler'
 //   --recheck re-check every selected firm
 // Other FNs named on a site are resolved locally or via one IWG
-// Kurzinformation call (FIRMENBUCH_TOKEN from .env).
+// Kurzinformation call (FIRMENBUCH_TOKEN from .env). With BRAVE_API_KEY in
+// .env, firms without an FN match on the guessed domains get one search
+// query each (FN or name + Ort), whose hits are checked the same way.
 
 import { migrate, getDb } from '../server/db/index.js';
 import { screenAt } from '../server/screen.js';
-import { createContext, discoverWebsite, relatedFirm } from '../server/web/discovery.js';
+import { createContext, discoverWebsite, relatedFirm, searchDomains } from '../server/web/discovery.js';
 import atAdapter from '../server/adapters/at.js';
 
 const arg = (k) => process.argv.find((a) => a.startsWith(`--${k}=`))?.split('=')[1];
@@ -69,7 +71,9 @@ const upsert = db.prepare(`
   WHERE at_website.method <> 'manuell'
 `);
 
-console.log(`discover:at-web — ${firms.length} Firmen, ${CONCURRENCY} parallel`);
+const STATUS_RANK = { fn: 5, gruppe: 4, name_plz: 3, andere_fn: 2, blockiert: 1, nicht_gefunden: 0 };
+
+console.log(`discover:at-web — ${firms.length} Firmen, ${CONCURRENCY} parallel${process.env.BRAVE_API_KEY ? ', Such-API an' : ''}`);
 const ctx = createContext();
 const counts = {};
 const started = Date.now();
@@ -82,6 +86,16 @@ async function worker() {
     let res;
     try {
       res = await discoverWebsite(ctx, { canon: r.id, name: r.name, plz: p.plz, homepage: p.homepage });
+      // No FN on any guessed domain: ask the search API (if configured).
+      if (res.status !== 'fn' && process.env.BRAVE_API_KEY) {
+        const domains = await searchDomains({ canon: r.id, name: r.name, ort: r.ort });
+        if (domains.length) {
+          const viaSearch = await discoverWebsite(ctx, { canon: r.id, name: r.name, plz: p.plz, candidateDomains: domains });
+          if (STATUS_RANK[viaSearch.status] > STATUS_RANK[res.status]) {
+            res = { ...viaSearch, candidates: [...res.candidates, ...viaSearch.candidates] };
+          }
+        }
+      }
     } catch (e) {
       res = { status: 'fehler', domain: null, url: null, impressumUrl: null, evidence: String(e.message).slice(0, 200),
         otherFns: [], source: null, candidates: [] };

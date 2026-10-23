@@ -36,7 +36,7 @@ const RULES = [
   ['X', 'Finanz / Versicherung', /\bbank\b|versicherung|leasing|finanzdienst|kredit|vermoegensberat/],
   ['X', 'Energie / Versorgung', /energie|\benergy\b|kraftwerk|wasserkraft|windkraft|windpark|fernwaerme|stromerzeug|biogas|photovoltaik|wasserversorgung|stadtwerke|mineraloel|stromhandel|gashandel|strom und gas|erdgas/],
   ['X', 'Öffentlich / gemeinnützig', /gemeinnuetzig|\bgemeinde|\bstadt\b|landesgesellschaft|bundesanstalt|\bverein\b|wohlfahrt|soziale|sozialer|behinderten|mildtaetig|\begen\b|genossenschaft/],
-  ['X', 'Tourismus / Gastronomie', /hotel|gasthof|gastgewerbe|gastronomie|restaurant|catering|beherbergung|tourismus|reisebuero|\breisen\b|bergbahn|seilbahn|therme|camping|\bsport\b|fussball|freizeit|casino/],
+  ['X', 'Tourismus / Gastronomie', /hotel|resort|kurhaus|gasthof|gastgewerbe|gastronomie|restaurant|catering|beherbergung|tourismus|reisebuero|\breisen\b|bergbahn|seilbahn|therme|camping|\bsport\b|fussball|freizeit|casino/],
   ['X', 'Kfz-Handel', /autohaus|\bkfz\b|kraftfahrzeug|fahrzeughandel|autohandel|\bauto\b/],
   ['X', 'Einzelhandel / B2C', /einzelhandel|versandhandel|onlinehandel|onlineshop|e-commerce|supermarkt|filial|boutique|\bmode\b|schuh|bekleidungshandel|sportartikelhandel|lebensmittelhandel|apotheke|optik|parfum|moebelhaus|tankstelle|trafik|franchise/],
 
