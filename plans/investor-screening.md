@@ -385,10 +385,20 @@ EBITDA-Schätzer-Fehlerband gemessen und in der UI angezeigt.
     TEUR → EUR); `--reparse` hat die DB nachgezogen
 - **Kernband:** 75 % FCF positiv, Median Cash Conversion ≈ 0,5–0,7,
   64 % Nettocash.
+- **Mehrjahres-FCF (23.10.2026):** `npm run ingest:at-jab -- --history` lädt
+  für das Kernband den Abschluss t−2, sonst t−1 (ältere Jahre sind oft nur
+  PDF).
+  - Ergebnis: 1 938 von 2 109 gefunden.
+  - `cashflowSeries` überbrückt das Jahr zwischen zwei Abschlüssen;
+    `cashflow_summary` speichert Median-FCF, Median- und kumulierte Cash
+    Conversion und die Zahl der positiven Jahre.
+  - Kernband: 1 301 Firmen mit 3 belastbaren Jahren, 537 mit 2, 240 mit 1.
+  - Der Screener zeigt den Median samt Jahresangabe und hat den neuen Filter
+    „FCF in allen Jahren positiv“.
 - **Offen:**
   - Validierung gegen publizierte Geldflussrechnungen (stecken in den
     Lagebericht-PDFs)
-  - Mehrjahres-FCF (je Firma ein älterer Abschluss = zwei weitere Jahre)
+  - PDF-only-Altjahre: 171 Firmen ohne älteren XML-Abschluss
   - EBITDA-/Umsatz-Schätzer
 
 ### Phase 4 — Cluster-Zuordnung (A1–B3)
