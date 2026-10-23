@@ -1075,6 +1075,7 @@ const BUNDESLAENDER = ['Wien', 'Niederösterreich', 'Oberösterreich', 'Steierma
 const SCREEN_COLUMNS = [
   // [sort key or null, label, title, numeric]
   ['name', 'Firma', 'Firmenwortlaut · FN · Ort (Bundesland) · Rechtsform', false],
+  ['cluster', 'Cluster', 'Geschäftsmodell-Cluster des Mandats (A1–B3), regelbasiert aus Geschäftszweig, Firmenname und Bilanzstruktur; X = außerhalb, – = unklar', false],
   ['stichtag', 'GJ', 'Bilanzstichtag des letzten Abschlusses', false],
   ['umsatz', 'Umsatz', 'Umsatzerlöse; „R“ = nur Rohergebnis ausgewiesen (mittelgroße GmbH)', true],
   ['ebitda', 'EBITDA', 'Betriebserfolg + Abschreibungen, wie berichtet (nicht normalisiert)', true],
@@ -1096,6 +1097,7 @@ function renderScreener(filters) {
   if (!els.screener.querySelector('.screener-bar')) buildScreenerShell();
   const bar = els.screener.querySelector('.screener-bar');
   bar.querySelector('[name=band]').value = f.band;
+  bar.querySelector('[name=cluster]').value = f.cluster || '';
   bar.querySelector('[name=bl]').value = f.bl || '';
   bar.querySelector('[name=konzern]').value = f.konzern || '';
   bar.querySelector('[name=cash]').value = f.cash || '';
@@ -1117,6 +1119,20 @@ function buildScreenerShell() {
     </header>
     <form class="screener-bar" onsubmit="return false">
       <label><span>EBITDA-Band</span><select name="band"></select></label>
+      <label><span>Cluster</span><select name="cluster">
+        <option value="">Alle</option>
+        <option value="AB">Mandats-Cluster A1–B3</option>
+        <option value="A">A-Cluster (A1–A3)</option>
+        <option value="A1">A1 · B2B-Großhandel / Distribution</option>
+        <option value="A2">A2 · Technische B2B-Dienstleistungen</option>
+        <option value="A3">A3 · Industrielle Nischen</option>
+        <option value="B">B-Cluster (B1–B3)</option>
+        <option value="B1">B1 · Healthcare / MedTech / Pharma</option>
+        <option value="B2">B2 · B2B-Software / Tech-Services</option>
+        <option value="B3">B3 · Logistik / Infrastrukturservices</option>
+        <option value="X">außerhalb der Cluster</option>
+        <option value="U">unklar</option>
+      </select></label>
       <label><span>Bundesland</span><select name="bl"><option value="">Alle</option></select></label>
       <label><span>Konzern</span><select name="konzern">
         <option value="">Alle</option><option value="ohne">ohne Konzernabschluss</option>
@@ -1172,7 +1188,7 @@ function buildScreenerShell() {
     if (!th) return;
     const cur = parseHash().filters || {};
     const same = (cur.sort || 'ebitda') === th.dataset.sort;
-    const dir = same ? ((cur.dir || 'desc') === 'desc' ? 'asc' : 'desc') : (th.dataset.sort === 'name' ? 'asc' : 'desc');
+    const dir = same ? ((cur.dir || 'desc') === 'desc' ? 'asc' : 'desc') : (['name', 'cluster'].includes(th.dataset.sort) ? 'asc' : 'desc');
     setHash({ kind: 'screen', filters: { ...cur, sort: th.dataset.sort, dir } });
   });
   els.screener.querySelector('tbody').addEventListener('click', (e) => {
@@ -1188,6 +1204,7 @@ function updateScreenHash() {
     kind: 'screen',
     filters: {
       band: bar.querySelector('[name=band]').value,
+      cluster: bar.querySelector('[name=cluster]').value,
       bl: bar.querySelector('[name=bl]').value,
       konzern: bar.querySelector('[name=konzern]').value,
       cash: bar.querySelector('[name=cash]').value,
@@ -1201,6 +1218,7 @@ function updateScreenHash() {
 
 async function loadScreener(f) {
   const params = new URLSearchParams({ band: f.band, sort: f.sort, dir: f.dir });
+  if (f.cluster) params.set('cluster', f.cluster);
   if (f.bl) params.set('bundesland', f.bl);
   if (f.konzern) params.set('konzern', f.konzern);
   if (f.cash) params.set('cash', f.cash);
@@ -1249,6 +1267,7 @@ function renderScreenRow(r) {
         [r.konzern, 'Konzern', 'Hat einen Konzernabschluss eingereicht'],
         [r.verflechtung, 'Konzernbezug', 'Hoher Saldo gegenüber verbundenen Unternehmen/Gesellschaftern (Cash-Pooling, Konzerndarlehen) — vermutlich Teil einer Gruppe'],
         [r.holding, 'Holding?', 'Ergebnis überwiegend aus Beteiligungserträgen/Finanzerfolg'],
+        [/\b(austria|österreich)\b/i.test(r.name || ''), 'Landestochter?', 'Firmenname mit „Austria/Österreich“ — oft Landesgesellschaft einer ausländischen Gruppe; Eigentümer prüfen (nicht im Firmenbuch-HVD)'],
       ];
       for (const [on, text, title] of badges) {
         if (!on) continue;
@@ -1260,6 +1279,7 @@ function renderScreenRow(r) {
       }
       return td;
     },
+    () => clusterCell(r),
     () => textCell((r.stichtag || '').slice(0, 4) || '—', 'yr'),
     () => textCell(r.umsatz != null ? fmtEur(r.umsatz) : r.rohergebnis != null ? `R ${fmtEur(r.rohergebnis)}` : '—', 'num'),
     () => textCell(fmtEur2(r.ebitda), 'num strong'),
@@ -1281,6 +1301,26 @@ function renderScreenRow(r) {
   ];
   for (const make of cells) tr.appendChild(make());
   return tr;
+}
+
+// Cluster code as a pill plus segment; low confidence is drawn dashed. The
+// tooltip carries the evidence the rules used.
+function clusterCell(r) {
+  const td = document.createElement('td');
+  td.className = 'cluster-cell';
+  const code = r.cluster || 'U';
+  const pill = document.createElement('span');
+  pill.className = `cl-pill cl-${code[0].toLowerCase()}${r.cluster_confidence === 'niedrig' ? ' low' : ''}`;
+  pill.textContent = code === 'U' ? '–' : code;
+  const seg = document.createElement('span');
+  seg.className = 'cl-seg';
+  seg.textContent = code === 'U' ? (r.cluster_segment || 'unklar') : r.cluster_segment || '';
+  td.append(pill, seg);
+  td.title = [
+    code === 'U' ? 'Cluster unklar' : `Konfidenz: ${r.cluster_confidence || '—'}`,
+    ...(r.clusterBasis || []),
+  ].join('\n');
+  return td;
 }
 
 // Cash-flow figures: median over the usable years with a "3J" marker; the

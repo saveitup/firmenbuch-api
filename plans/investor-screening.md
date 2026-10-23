@@ -427,6 +427,28 @@ EBITDA-Schätzer-Fehlerband gemessen und in der UI angezeigt.
 
 **Exit:** ≥ 85 % korrekte Cluster im Kalibrierungsset.
 
+**Status v1 (regelbasiert, ohne LLM)** — kein `ANTHROPIC_API_KEY` vorhanden,
+daher statt ÖNACE-Klassifikation per Claude ein Regel-Lexikon in
+`server/analytics/cluster.js`:
+- Evidenz: Geschäftszweig (Gewicht 3) + Firmenwortlaut (2), Bilanzstruktur
+  (Vorräte-, Anlagen-, Personal-, Rohertragsquote) entscheidet nur Gleichstände
+  zwischen Mandats-Clustern und setzt die Konfidenz (hoch/mittel/niedrig).
+- Spezifische Segmente schlagen die Sammelsegmente („Pharmavertrieb“ → B1,
+  nicht A1); Liquidation und Töchter bekannter Gruppen (nur aus dem
+  Firmenwortlaut) sind absolute Ausschlüsse.
+- `npm run classify:at` (keine IWG-Calls, < 2 s), Tabelle `at_cluster`,
+  manuelle Overrides (`method = 'manuell'`) bleiben erhalten.
+- Verteilung auf 8 181 Firmen: A1 626 · A2 330 · A3 1 185 · B1 242 · B2 218 ·
+  B3 313 · X 2 938 · U 2 329 (ohne Geschäftszweig und ohne Namenshinweis).
+- Stichprobe ≈ 90 % plausibel; bekannte Grenzen: Hersteller mit
+  „Handel“-Geschäftszweig landen in A1 (z. B. Internorm), Landestöchter
+  ausländischer Gruppen sind nicht erkennbar (Badge „Landestochter?“ als
+  Hinweis), U braucht Website/LLM (Phase 5/6).
+- Screener: Filter „Cluster“ (A1–B3, A, B, einzelne Cluster, X, U), Spalte mit
+  Code, Segment und Evidenz-Tooltip, CSV-Spalten Cluster/Segment/Konfidenz.
+- Offen: Kalibrierungsset, clusterspezifische Prüfpunkte (3.), LLM-Pass für
+  U und niedrige Konfidenz, sobald ein API-Key da ist.
+
 ### Phase 5 — Website-Discovery & Crawler (nur Qualified)
 
 - **Discovery:** Impressum-FN-Match (§ 5 ECG) als Verifikationsschlüssel;

@@ -217,3 +217,16 @@ CREATE TABLE IF NOT EXISTS cashflow_summary (
   computed_at                TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (country, national_id_canon)
 );
+
+-- Business-model cluster per firm (analytics/cluster.js, MBI mandate § 4).
+-- method 'manuell' marks a user override that re-runs never touch.
+CREATE TABLE IF NOT EXISTS at_cluster (
+  national_id_canon  TEXT PRIMARY KEY,
+  cluster            TEXT NOT NULL,                    -- A1 A2 A3 B1 B2 B3 · X außerhalb · U unklar
+  segment            TEXT,
+  confidence         TEXT,                             -- hoch | mittel | niedrig
+  basis_json         TEXT,                             -- evidence lines
+  method             TEXT NOT NULL DEFAULT 'regeln',   -- regeln | llm | manuell
+  updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_atcluster_cluster ON at_cluster(cluster);

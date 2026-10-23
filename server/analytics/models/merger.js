@@ -66,10 +66,13 @@ export function runMerger(acq, tgt, m, { sensitivity = true } = {}) {
   const tgtNetDebt = T.debt - T.cash;
   const equityPrice = ev - tgtNetDebt;
   const fees = ev * m.feesPct;
+  // The stock share is taken as entered; cash and new debt split the rest in
+  // the ratio of their inputs. The sensitivity grid (and the Excel data
+  // table) vary the stock share alone under the same rule.
   const mixTotal = m.pctCash + m.pctStock + m.pctDebt;
-  const mix = mixTotal > 0
-    ? { cash: m.pctCash / mixTotal, stock: m.pctStock / mixTotal, debt: m.pctDebt / mixTotal }
-    : { cash: 0, stock: 0, debt: 1 };
+  const stockShare = Math.min(1, Math.max(0, m.pctStock));
+  const cashShare = m.pctCash + m.pctDebt > 0 ? (1 - stockShare) * (m.pctCash / (m.pctCash + m.pctDebt)) : 0;
+  const mix = { cash: cashShare, stock: stockShare, debt: 1 - stockShare - cashShare };
   const cashUsed = equityPrice * mix.cash;
   const stockIssued = equityPrice * mix.stock;
   const newDebt = equityPrice * mix.debt;
@@ -170,18 +173,16 @@ export function runMerger(acq, tgt, m, { sensitivity = true } = {}) {
   if (pfCash < 0) result.warnings.push('Die Barkomponente übersteigt die Kasse beider Unternehmen — mehr Schulden oder Aktien nötig.');
   if (!(acqNi0 > 0)) result.warnings.push('Käufer ohne positiven Jahresüberschuss: kein Aktienkurs über KGV ableitbar, EPS-Effekt nicht aussagekräftig.');
   if (equityPrice <= 0) result.warnings.push('Net Debt des Ziels übersteigt den Unternehmenswert — EK-Kaufpreis nicht positiv.');
-  if (Math.abs(mixTotal - 1) > 0.005) result.warnings.push('Finanzierungsmix ergibt nicht 100 % — Anteile wurden normiert.');
+  if (Math.abs(mixTotal - 1) > 0.005) result.warnings.push('Finanzierungsmix ergibt nicht 100 % — Kasse und Schulden teilen den Rest nach Aktienanteil im Verhältnis ihrer Eingaben.');
 
   if (sensitivity) {
     const multiples = [-2, -1, 0, 1, 2].map((d) => m.offerMultiple + d).filter((x) => x > 0);
     const stockShares = [0, 0.25, 0.5, 0.75, 1];
-    const rest = mix.cash + mix.debt;
     result.sensitivity = {
       rows: multiples,
       cols: stockShares,
       accretion: multiples.map((om) => stockShares.map((s) => {
-        const cashShare = rest > 0 ? (1 - s) * (mix.cash / rest) : 0;
-        const r = runMerger(acq, tgt, { ...m, offerMultiple: om, pctStock: s, pctCash: cashShare, pctDebt: 1 - s - cashShare }, { sensitivity: false });
+        const r = runMerger(acq, tgt, { ...m, offerMultiple: om, pctStock: s }, { sensitivity: false });
         return r.error ? null : r.years[0].accretion;
       })),
     };

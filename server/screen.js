@@ -14,7 +14,7 @@ export const EBITDA_BANDS = {
 const SORTS = {
   ebitda: 'ebitda', umsatz: 'umsatz_oder_roh', bilanzsumme: 'bilanzsumme',
   ek_quote: 'ek_quote', name: 'name', stichtag: 'stichtag', wachstum: 'ebitda_wachstum',
-  fcf: 'fcf_operativ', cash_conversion: 'cash_conversion', net_debt_ebitda: 'net_debt_ebitda',
+  fcf: 'fcf_operativ', cash_conversion: 'cash_conversion', net_debt_ebitda: 'net_debt_ebitda', cluster: 'cluster',
 };
 
 // A net group/shareholder balance above this share of the Bilanzsumme
@@ -76,6 +76,10 @@ const BASE_SQL = `
       cf.quality                                        AS cf_quality,
       cf.warnings_json                                  AS cf_warnings_json,
       CASE WHEN f.bilanzsumme > 0 AND ABS(cf.konzernsaldo) > ${VERFLECHTUNG_QUOTE} * f.bilanzsumme THEN 1 ELSE 0 END AS verflechtung,
+      COALESCE(k.cluster, 'U')                          AS cluster,
+      k.segment                                         AS cluster_segment,
+      k.confidence                                      AS cluster_confidence,
+      k.basis_json                                      AS cluster_basis_json,
       EXISTS (SELECT 1 FROM at_register_documents d WHERE d.national_id_canon = c.national_id_canon AND d.doc_code = '49')  AS konzern,
       EXISTS (SELECT 1 FROM at_register_documents d WHERE d.national_id_canon = c.national_id_canon AND d.doc_code = '136') AS liquidation
     FROM ranked f
@@ -84,6 +88,7 @@ const BASE_SQL = `
     LEFT JOIN at_company_profile p ON p.national_id_canon = f.national_id_canon
     LEFT JOIN cashflow_yearly cf ON cf.country = 'AT' AND cf.national_id_canon = f.national_id_canon AND cf.stichtag = f.stichtag
     LEFT JOIN cashflow_summary s ON s.country = 'AT' AND s.national_id_canon = f.national_id_canon
+    LEFT JOIN at_cluster k ON k.national_id_canon = f.national_id_canon
     WHERE f.rn = 1
   )
   SELECT * FROM rows
@@ -110,6 +115,11 @@ export function screenAt(params = {}) {
   if (params.cash === 'fcf') where.push('cf_years >= 1 AND fcf_operativ > 0');
   if (params.cash === 'cc50') where.push('cf_years >= 1 AND cash_conversion >= 0.5');
   if (params.cash === 'stetig') where.push('cf_years >= 2 AND fcf_positiv_jahre = cf_years');
+  // Cluster: one code, a group (A = A1–A3, B = B1–B3, AB = all mandate
+  // clusters), or X / U.
+  const CLUSTER_GROUPS = { A: ['A1', 'A2', 'A3'], B: ['B1', 'B2', 'B3'], AB: ['A1', 'A2', 'A3', 'B1', 'B2', 'B3'] };
+  const clusterCodes = CLUSTER_GROUPS[params.cluster] || (/^(A[123]|B[123]|X|U)$/.test(params.cluster || '') ? [params.cluster] : null);
+  if (clusterCodes) where.push(`cluster IN (${clusterCodes.map((c) => `'${c}'`).join(', ')})`);
   if (params.verschuldung === 'nettocash') where.push('net_debt <= 0');
   if (params.verschuldung === 'max1') where.push('net_debt_ebitda <= 1');
   if (params.verschuldung === 'max2') where.push('net_debt_ebitda <= 2');
@@ -144,10 +154,11 @@ function withOrgane(r) {
   try { organe = r.organe_json ? JSON.parse(r.organe_json) : []; } catch {}
   const gf = organe.filter((o) => o.roleCode === 'GF' || o.roleCode === 'VM' || o.roleCode === 'KP');
   const jahrgaenge = gf.map((o) => o.geburtsjahr).filter(Boolean);
-  let cfWarnings = [], cfJahre = [];
+  let cfWarnings = [], cfJahre = [], clusterBasis = [];
   try { cfWarnings = r.cf_warnings_json ? JSON.parse(r.cf_warnings_json) : []; } catch {}
   try { cfJahre = r.cf_jahre_json ? JSON.parse(r.cf_jahre_json) : []; } catch {}
-  const { organe_json, cf_warnings_json, cf_jahre_json, ...rest } = r;
+  try { clusterBasis = r.cluster_basis_json ? JSON.parse(r.cluster_basis_json) : []; } catch {}
+  const { organe_json, cf_warnings_json, cf_jahre_json, cluster_basis_json, ...rest } = r;
   return {
     ...rest,
     konzern: !!r.konzern,
@@ -155,6 +166,7 @@ function withOrgane(r) {
     holding: !!r.holding,
     cfWarnings,
     cfJahre,
+    clusterBasis,
     gfCount: gf.length,
     prokuraCount: organe.filter((o) => o.roleCode === 'PR').length,
     aeltesterGfJahrgang: jahrgaenge.length ? Math.min(...jahrgaenge) : null,
@@ -179,6 +191,7 @@ function corpusMeta() {
 
 const CSV_COLUMNS = [
   ['id', 'FN'], ['name', 'Firma'], ['address', 'Adresse'], ['bundesland', 'Bundesland'], ['rechtsform', 'Rechtsform'],
+  ['cluster', 'Cluster'], ['cluster_segment', 'Segment'], ['cluster_confidence', 'Cluster-Konfidenz'],
   ['stichtag', 'Stichtag'], ['umsatz', 'Umsatz'], ['rohergebnis', 'Rohergebnis'], ['ebitda', 'EBITDA'],
   ['ebitda_vj', 'EBITDA Vorjahr'], ['ebit', 'Betriebserfolg'], ['jahresergebnis', 'Jahresergebnis'],
   ['bilanzsumme', 'Bilanzsumme'], ['eigenkapital', 'Eigenkapital'], ['ek_quote', 'EK-Quote'],

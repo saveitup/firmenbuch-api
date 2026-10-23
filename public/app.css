@@ -1357,3 +1357,23 @@ main, header, footer { position: relative; z-index: 1; }
   .model-bar-row { grid-template-columns: 110px minmax(0, 1fr) 70px; }
   .model-contrib-row { grid-template-columns: 90px minmax(0, 1fr) 90px; }
 }
+
+/* Cluster column */
+.screener-table td.cluster-cell { white-space: normal; min-width: 130px; }
+.cl-pill {
+  display: inline-block;
+  min-width: 26px;
+  padding: 1px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-align: center;
+  vertical-align: 1px;
+}
+.cl-pill.cl-a { background: var(--accent-soft); color: var(--accent); }
+.cl-pill.cl-b { background: var(--accent-2-soft); color: var(--accent-2); }
+.cl-pill.cl-x, .cl-pill.cl-u { background: var(--bg-2); color: var(--muted); }
+.cl-pill.low { background: transparent; border-style: dashed; border-color: currentColor; }
+.cl-seg { display: block; margin-top: 2px; font-size: var(--text-xs); color: var(--muted); }
