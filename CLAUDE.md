@@ -25,6 +25,7 @@ server/
 ├── normalize.js           Company-/Financials-/OCR-Cache in SQLite
 ├── cache.js               In-Memory LRU
 ├── analytics/             Health-Score + Kennzahl-Berechnung
+│   └── models/            3-Statement-, LBO-, Merger-Modell (pure ESM, auch im Browser)
 ├── auth/                  Cookie-Session + scrypt
 ├── db/                    SQLite-Schema + Migrationen
 └── index.js               Express-Routen
@@ -43,7 +44,24 @@ GET /api/countries                         Liste der aktiven Adapter
 GET /api/search?q=…&countries=FR,AT        Cross-Country-Suche
 GET /api/company/:country/:id              Einzellookup (ISO-Land + national_id)
 GET /api/company/:country/:id/document/:k  Dokument-Download-Proxy (AT IWG)
+POST /api/models/three-statement           {country, id, assumptions?}
+POST /api/models/lbo                       {country, id, assumptions?: {operating?, lbo?}}
+POST /api/models/merger                    {acquirer, target, assumptions?: {acquirer?, target?, merger?}}
 ```
+
+## Bewertungsmodelle
+
+`server/analytics/models/` — drei Modelle, die aufeinander aufbauen:
+`three-statement.js` (GuV, Bilanz, Kapitalflussrechnung verknüpft, Bilanzcheck
+pro Jahr) ist die Basis; `lbo.js` (Sources & Uses, Tilgungsplan mit Cash Sweep
+und PIK, IRR/MOIC) und `merger.js` (EPS Accretion/Dilution, PPA, Closing-Bilanz)
+rufen `projectThreeStatement` auf. Die Module sind reine ES-Module ohne
+Node-APIs: Express liefert sie unter `/lib/models/` aus, `public/models.js`
+importiert dieselben Dateien und rechnet bei jeder Eingabe im Browser neu.
+Die API-Routen lesen nur gecachte Financials (`readFinancials`), die Firma muss
+also einmal über `/api/company` geladen worden sein. Nach Änderungen an den
+Modellen: Bilanzcheck (`balanced`), Sources = Uses und die Wertbeitrags-Brücke
+müssen exakt aufgehen.
 
 ## Quickstart
 

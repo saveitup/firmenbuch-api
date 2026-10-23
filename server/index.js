@@ -4,6 +4,7 @@
 //   GET /api/countries                          list registered adapters
 //   GET /api/search?q=&country=                 cross-country or single-country search
 //   GET /api/company/:country/:id               one company by national id
+//   POST /api/models/:model                     three-statement | lbo | merger
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +17,9 @@ import { canonId, AdapterError } from './adapters/base.js';
 import { enrichWithGleif } from './adapters/gleif-enrich.js';
 import { computeHealthScore } from './analytics/health-score.js';
 import { computeRatios } from './analytics/ratios.js';
+import { buildBase, defaultAssumptions, projectThreeStatement } from './analytics/models/three-statement.js';
+import { defaultLboAssumptions, runLbo } from './analytics/models/lbo.js';
+import { defaultMergerAssumptions, runMerger } from './analytics/models/merger.js';
 import { LruCache } from './cache.js';
 import { screenAt, toCsv, EBITDA_BANDS } from './screen.js';
 
@@ -200,6 +204,57 @@ app.get('/api/screen.csv', (req, res) => {
   }
 });
 
+// Financial models on cached financials (server/analytics/models/). The
+// browser runs the same modules from /lib/models/ and recalculates locally;
+// these routes are for API clients. Overrides replace the calibrated defaults
+// key by key — unknown keys and mistyped values are ignored. The company's
+// financials must be cached, i.e. looked up once via /api/company.
+function withOverrides(defaults, overrides) {
+  const out = { ...defaults };
+  for (const [key, value] of Object.entries(overrides || {})) {
+    if (!Object.hasOwn(defaults, key)) continue;
+    const d = defaults[key];
+    const ok = Array.isArray(d)
+      ? Array.isArray(value) && value.length && value.every(Number.isFinite)
+      : typeof d === 'number' ? Number.isFinite(value) : typeof value === typeof d;
+    if (ok) out[key] = value;
+  }
+  return out;
+}
+
+function modelCompany(spec, overrides) {
+  const country = String(spec?.country || '').toUpperCase();
+  const base = buildBase(readFinancials(country, canonId(String(spec?.id || ''))), { country });
+  if (base.error) throw Object.assign(new Error(`${country}:${spec?.id || '?'} — ${base.error}`), { status: 422 });
+  return { base, assumptions: withOverrides(defaultAssumptions(base), overrides) };
+}
+
+app.post('/api/models/:model', (req, res) => {
+  const body = req.body || {};
+  const a = body.assumptions || {};
+  try {
+    let out;
+    if (req.params.model === 'three-statement') {
+      const c = modelCompany(body, a);
+      out = { base: c.base, assumptions: c.assumptions, result: projectThreeStatement(c.base, c.assumptions) };
+    } else if (req.params.model === 'lbo') {
+      const c = modelCompany(body, a.operating);
+      const lbo = withOverrides(defaultLboAssumptions(), a.lbo);
+      out = { base: c.base, assumptions: { operating: c.assumptions, lbo }, result: runLbo(c.base, c.assumptions, lbo) };
+    } else if (req.params.model === 'merger') {
+      const acq = modelCompany(body.acquirer, a.acquirer);
+      const tgt = modelCompany(body.target, a.target);
+      const merger = withOverrides(defaultMergerAssumptions(acq, tgt), a.merger);
+      out = { assumptions: { acquirer: acq.assumptions, target: tgt.assumptions, merger }, result: runMerger(acq, tgt, merger) };
+    } else {
+      return res.status(404).json({ error: 'Unknown model — use three-statement, lbo or merger' });
+    }
+    res.status(out.result.error ? 422 : 200).json(out);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
 // Proxy a single document download through the adapter. Currently only AT
 // supports this (JustizOnline URKUNDE). Each call incurs an IWG fee, so the
 // route is intentionally 1:1 with the user's click — no prefetching.
@@ -221,6 +276,7 @@ app.get('/api/company/:country/:id/document/:docKey', async (req, res) => {
   }
 });
 
+app.use('/lib/models', express.static(path.join(__dirname, 'analytics/models')));
 app.use(express.static(path.join(ROOT, 'public')));
 
 const PORT = process.env.PORT || 3456;

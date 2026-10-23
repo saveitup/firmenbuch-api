@@ -5,6 +5,8 @@
 //   #co=AT:129377k   → detail view for a specific company
 //   #screen&band=kern&bl=Wien → investor screener (AT universe)
 //   ∅               → empty state with example chips
+import { renderModels } from './models.js';
+
 const els = {
   hero: document.querySelector('.hero'),
   screener: document.getElementById('screener'),
@@ -616,6 +618,7 @@ function renderDetail(c, people, financials, score, documents) {
           <div class="bilanz-pane bilanz-pane-kennzahlen" hidden></div>
           <p class="bilanz-note"></p>
         </section>
+        <section class="detail-section detail-models detail-col-span" hidden></section>
         <section class="detail-section detail-documents detail-col-span" hidden>
           <h3>Original-Jahresabschlüsse</h3>
           <p class="documents-note"></p>
@@ -770,6 +773,10 @@ function renderDetail(c, people, financials, score, documents) {
     ? [...financials].reverse().find((r) => r.balanceSheet)
     : null;
   if (latestBalance) renderBilanz(els.detail.querySelector('.detail-bilanz'), latestBalance);
+  // 3-Statement / LBO / Merger on the same rows (public/models.js).
+  if (Array.isArray(financials) && financials.length) {
+    renderModels(els.detail.querySelector('.detail-models'), { company: c, financials });
+  }
 
   // `hasAnyFinancials` is broader than `latestBalance`: it's true whenever
   // at least one year of parsed Kennzahlen (scalar or tree) is available,
