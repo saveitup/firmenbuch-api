@@ -297,11 +297,14 @@ export function projectThreeStatement(base, a, opts = {}) {
       };
     };
 
+    // Converge tightly: the Excel export recalculates the same fixed point and
+    // must reproduce these numbers to the cent.
+    const tol = 1e-10 * Math.abs(revenue) + 1e-9;
     let y = financeYear(null);
-    for (let iter = 0; iter < 50; iter++) {
+    for (let iter = 0; iter < 100; iter++) {
       const next = financeYear(y);
-      const converged = Math.abs(next.interestExpense - y.interestExpense) < 1e-6 * revenue + 1e-6
-        && Math.abs(next.interestIncome - y.interestIncome) < 1e-6 * revenue + 1e-6;
+      const converged = Math.abs(next.interestExpense - y.interestExpense) < tol
+        && Math.abs(next.interestIncome - y.interestIncome) < tol;
       y = next;
       if (converged) break;
     }

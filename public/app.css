@@ -1189,6 +1189,16 @@ main, header, footer { position: relative; z-index: 1; }
   cursor: pointer;
 }
 .model-reset:hover { border-color: var(--accent); color: var(--accent); }
+.model-export {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font: 600 var(--text-xs)/1.2 var(--font-sans);
+  color: var(--accent-contrast);
+  cursor: pointer;
+}
+.model-export:hover { background: var(--accent-hi); border-color: var(--accent-hi); }
 .model-warnings { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--space-1); }
 .model-warnings li {
   font-size: var(--text-xs);

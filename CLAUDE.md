@@ -47,6 +47,7 @@ GET /api/company/:country/:id/document/:k  Dokument-Download-Proxy (AT IWG)
 POST /api/models/three-statement           {country, id, assumptions?}
 POST /api/models/lbo                       {country, id, assumptions?: {operating?, lbo?}}
 POST /api/models/merger                    {acquirer, target, assumptions?: {acquirer?, target?, merger?}}
+POST /api/models/export                    .xlsx mit Formeln; Body wie lbo + {counterparty?, role?}
 ```
 
 ## Bewertungsmodelle
@@ -62,6 +63,15 @@ Die API-Routen lesen nur gecachte Financials (`readFinancials`), die Firma muss
 also einmal über `/api/company` geladen worden sein. Nach Änderungen an den
 Modellen: Bilanzcheck (`balanced`), Sources = Uses und die Wertbeitrags-Brücke
 müssen exakt aufgehen.
+
+**Excel-Export** (`excel-export.js` + `xlsx-writer.js`, ebenfalls pure ESM):
+jede Modellzeile ist eine Excel-Formel, jede Formelzelle trägt den Engine-Wert
+als Cache. Der Button „Excel-Export" baut die Datei im Browser aus den
+aktuellen Annahmen. Zinsen auf Durchschnittsbestände sind zirkulär: die Datei
+schaltet iterative Berechnung ein, `Annahmen` hat einen Schalter 1/0. Wer
+Engine-Formeln ändert, muss die Excel-Formeln mitziehen und prüft mit
+`node scripts/check-excel-export.mjs` (macOS + Excel: Excel rechnet die Datei
+ohne Cache neu, jede Zelle muss dem Engine-Wert entsprechen).
 
 ## Quickstart
 

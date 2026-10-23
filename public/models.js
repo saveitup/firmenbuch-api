@@ -2,10 +2,12 @@
 // The engines are the server modules in server/analytics/models/, served at
 // /lib/models/ — every input recalculates in the browser without a round
 // trip. LBO and merger run on the 3-Statement drivers of this company, so a
-// change there carries through to both.
+// change there carries through to both. The Excel export is built here as
+// well, from the current inputs, with live formulas.
 import { buildBase, defaultAssumptions, projectThreeStatement } from '/lib/models/three-statement.js';
 import { defaultLboAssumptions, runLbo } from '/lib/models/lbo.js';
 import { defaultMergerAssumptions, runMerger } from '/lib/models/merger.js';
+import { buildModelWorkbook, modelFileName } from '/lib/models/excel-export.js';
 
 const CUR_SYM = { EUR: '€', USD: '$', GBP: '£', CHF: 'CHF', NOK: 'NOK', SEK: 'SEK', DKK: 'DKK', PLN: 'PLN', CZK: 'CZK' };
 const PCT = new Intl.NumberFormat('de-AT', { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 });
@@ -195,6 +197,7 @@ function toolbar(f, resetKey, check, warnings = []) {
       <span class="model-toolbar-right">
         <span class="model-unit">Beträge in ${esc(f.unit)}</span>
         <button type="button" class="model-reset" data-reset="${resetKey}">Annahmen zurücksetzen</button>
+        <button type="button" class="model-export" data-export title="Alle drei Modelle mit den aktuellen Annahmen als Excel-Datei mit Formeln">Excel-Export</button>
       </span>
     </div>
     ${warnings.length ? `<ul class="model-warnings">${warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}`;
@@ -366,7 +369,25 @@ export function renderModels(section, { company, financials }) {
       drawFields(key);
       render();
     }
+    if (ev.target.closest('[data-export]')) exportExcel();
   });
+
+  // Workbook with all three models as they stand: this company's drivers,
+  // the LBO inputs and, once a counterparty is picked, the merger.
+  function exportExcel() {
+    const merger = state.cp && state.merger
+      ? { role: state.role, assumptions: state.merger, counterparty: state.cp }
+      : null;
+    const bytes = buildModelWorkbook({ company, base, ts: state.ts, lbo: state.lbo, merger });
+    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = modelFileName(company, base);
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 
   function renderTs() {
     const model = projectThreeStatement(base, state.ts);

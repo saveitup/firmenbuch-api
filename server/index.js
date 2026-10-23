@@ -5,6 +5,7 @@
 //   GET /api/search?q=&country=                 cross-country or single-country search
 //   GET /api/company/:country/:id               one company by national id
 //   POST /api/models/:model                     three-statement | lbo | merger
+//   POST /api/models/export                     the three models as .xlsx with formulas
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,6 +21,7 @@ import { computeRatios } from './analytics/ratios.js';
 import { buildBase, defaultAssumptions, projectThreeStatement } from './analytics/models/three-statement.js';
 import { defaultLboAssumptions, runLbo } from './analytics/models/lbo.js';
 import { defaultMergerAssumptions, runMerger } from './analytics/models/merger.js';
+import { buildModelWorkbook, modelFileName } from './analytics/models/excel-export.js';
 import { LruCache } from './cache.js';
 import { screenAt, toCsv, EBITDA_BANDS } from './screen.js';
 
@@ -228,6 +230,39 @@ function modelCompany(spec, overrides) {
   if (base.error) throw Object.assign(new Error(`${country}:${spec?.id || '?'} — ${base.error}`), { status: 422 });
   return { base, assumptions: withOverrides(defaultAssumptions(base), overrides) };
 }
+
+// Excel workbook of all three models with live formulas. Body as for lbo,
+// plus optional { counterparty: {country, id}, role: 'acquirer' | 'target' }
+// and assumptions.counterparty / assumptions.merger for the merger sheets.
+app.post('/api/models/export', (req, res) => {
+  const body = req.body || {};
+  const a = body.assumptions || {};
+  try {
+    const self = modelCompany(body, a.operating);
+    const companyOf = (spec) => readCompany(String(spec.country).toUpperCase(), canonId(String(spec.id)))
+      || { country: String(spec.country).toUpperCase(), nationalId: String(spec.id), legalName: String(spec.id) };
+    let merger = null;
+    if (body.counterparty) {
+      const role = body.role === 'target' ? 'target' : 'acquirer';
+      const cp = modelCompany(body.counterparty, a.counterparty);
+      const [acq, tgt] = role === 'acquirer' ? [self, cp] : [cp, self];
+      merger = {
+        role,
+        assumptions: withOverrides(defaultMergerAssumptions(acq, tgt), a.merger),
+        counterparty: { company: companyOf(body.counterparty), base: cp.base, assumptions: cp.assumptions },
+      };
+    }
+    const company = companyOf(body);
+    const bytes = buildModelWorkbook({
+      company, base: self.base, ts: self.assumptions, lbo: withOverrides(defaultLboAssumptions(), a.lbo), merger,
+    });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${modelFileName(company, self.base)}"`);
+    res.send(Buffer.from(bytes));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
 
 app.post('/api/models/:model', (req, res) => {
   const body = req.body || {};
