@@ -80,6 +80,12 @@ const BASE_SQL = `
       k.segment                                         AS cluster_segment,
       k.confidence                                      AS cluster_confidence,
       k.basis_json                                      AS cluster_basis_json,
+      w.status                                          AS website_status,
+      w.domain                                          AS website_domain,
+      w.url                                             AS website_url,
+      w.impressum_url                                   AS impressum_url,
+      w.evidence                                        AS website_evidence,
+      w.other_fns_json                                  AS website_other_json,
       EXISTS (SELECT 1 FROM at_register_documents d WHERE d.national_id_canon = c.national_id_canon AND d.doc_code = '49')  AS konzern,
       EXISTS (SELECT 1 FROM at_register_documents d WHERE d.national_id_canon = c.national_id_canon AND d.doc_code = '136') AS liquidation
     FROM ranked f
@@ -89,6 +95,7 @@ const BASE_SQL = `
     LEFT JOIN cashflow_yearly cf ON cf.country = 'AT' AND cf.national_id_canon = f.national_id_canon AND cf.stichtag = f.stichtag
     LEFT JOIN cashflow_summary s ON s.country = 'AT' AND s.national_id_canon = f.national_id_canon
     LEFT JOIN at_cluster k ON k.national_id_canon = f.national_id_canon
+    LEFT JOIN at_website w ON w.national_id_canon = f.national_id_canon
     WHERE f.rn = 1
   )
   SELECT * FROM rows
@@ -120,6 +127,12 @@ export function screenAt(params = {}) {
   const CLUSTER_GROUPS = { A: ['A1', 'A2', 'A3'], B: ['B1', 'B2', 'B3'], AB: ['A1', 'A2', 'A3', 'B1', 'B2', 'B3'] };
   const clusterCodes = CLUSTER_GROUPS[params.cluster] || (/^(A[123]|B[123]|X|U)$/.test(params.cluster || '') ? [params.cluster] : null);
   if (clusterCodes) where.push(`cluster IN (${clusterCodes.map((c) => `'${c}'`).join(', ')})`);
+  // Website (Phase 5): verified by FN, found (FN, group site, Name + PLZ),
+  // checked without result, or not checked yet.
+  if (params.website === 'fn') where.push(`website_status = 'fn'`);
+  if (params.website === 'gefunden') where.push(`website_status IN ('fn', 'gruppe', 'name_plz')`);
+  if (params.website === 'ohne') where.push(`website_status IN ('nicht_gefunden', 'andere_fn', 'blockiert', 'fehler')`);
+  if (params.website === 'offen') where.push('website_status IS NULL');
   if (params.verschuldung === 'nettocash') where.push('net_debt <= 0');
   if (params.verschuldung === 'max1') where.push('net_debt_ebitda <= 1');
   if (params.verschuldung === 'max2') where.push('net_debt_ebitda <= 2');
@@ -154,11 +167,12 @@ function withOrgane(r) {
   try { organe = r.organe_json ? JSON.parse(r.organe_json) : []; } catch {}
   const gf = organe.filter((o) => o.roleCode === 'GF' || o.roleCode === 'VM' || o.roleCode === 'KP');
   const jahrgaenge = gf.map((o) => o.geburtsjahr).filter(Boolean);
-  let cfWarnings = [], cfJahre = [], clusterBasis = [];
+  let cfWarnings = [], cfJahre = [], clusterBasis = [], websiteOther = [];
   try { cfWarnings = r.cf_warnings_json ? JSON.parse(r.cf_warnings_json) : []; } catch {}
   try { cfJahre = r.cf_jahre_json ? JSON.parse(r.cf_jahre_json) : []; } catch {}
   try { clusterBasis = r.cluster_basis_json ? JSON.parse(r.cluster_basis_json) : []; } catch {}
-  const { organe_json, cf_warnings_json, cf_jahre_json, cluster_basis_json, ...rest } = r;
+  try { websiteOther = r.website_other_json ? JSON.parse(r.website_other_json) : []; } catch {}
+  const { organe_json, cf_warnings_json, cf_jahre_json, cluster_basis_json, website_other_json, ...rest } = r;
   return {
     ...rest,
     konzern: !!r.konzern,
@@ -167,6 +181,10 @@ function withOrgane(r) {
     cfWarnings,
     cfJahre,
     clusterBasis,
+    websiteOther,
+    // Another FN on the site that belongs to a related firm: the website is
+    // the group's (often a family holding — context, not an exclusion).
+    websiteGruppe: websiteOther.filter((o) => o.related).map((o) => `FN ${o.fn} ${o.name || ''}`.trim()).join(' · ') || null,
     gfCount: gf.length,
     prokuraCount: organe.filter((o) => o.roleCode === 'PR').length,
     aeltesterGfJahrgang: jahrgaenge.length ? Math.min(...jahrgaenge) : null,
@@ -192,6 +210,8 @@ function corpusMeta() {
 const CSV_COLUMNS = [
   ['id', 'FN'], ['name', 'Firma'], ['address', 'Adresse'], ['bundesland', 'Bundesland'], ['rechtsform', 'Rechtsform'],
   ['cluster', 'Cluster'], ['cluster_segment', 'Segment'], ['cluster_confidence', 'Cluster-Konfidenz'],
+  ['website_url', 'Website'], ['website_status', 'Website-Abgleich'], ['impressum_url', 'Impressum'],
+  ['websiteGruppe', 'Website nennt (Gruppe)'],
   ['stichtag', 'Stichtag'], ['umsatz', 'Umsatz'], ['rohergebnis', 'Rohergebnis'], ['ebitda', 'EBITDA'],
   ['ebitda_vj', 'EBITDA Vorjahr'], ['ebit', 'Betriebserfolg'], ['jahresergebnis', 'Jahresergebnis'],
   ['bilanzsumme', 'Bilanzsumme'], ['eigenkapital', 'Eigenkapital'], ['ek_quote', 'EK-Quote'],

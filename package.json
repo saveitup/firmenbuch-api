@@ -18,7 +18,9 @@
     "eval:new": "node --env-file-if-exists=.env scripts/eval-new-adapters.mjs",
     "check:jab": "node scripts/check-jab-parser.mjs && node scripts/check-financials-store.mjs && node scripts/check-cashflow.mjs",
     "compute:at-cashflow": "node scripts/at-cashflow.mjs",
-    "classify:at": "node scripts/at-cluster.mjs"
+    "classify:at": "node scripts/at-cluster.mjs",
+    "discover:at-web": "node --env-file-if-exists=.env scripts/at-website-discovery.mjs",
+    "check:web": "node scripts/check-discovery.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",

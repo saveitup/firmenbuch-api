@@ -4,84 +4,143 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Kontur — Europäische Firmendatenbank</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="stylesheet" href="/design/reset.css" />
   <link rel="stylesheet" href="/design/tokens.css" />
   <link rel="stylesheet" href="/design/components.css" />
   <link rel="stylesheet" href="/app.css" />
 </head>
-<body>
-  <div class="grain-overlay" aria-hidden="true"></div>
+<body data-view="home">
+  <div class="shell">
+    <aside id="sidebar" class="sidebar" aria-label="Navigation">
+      <div class="sidebar-inner">
+        <div class="sidebar-head">
+          <a class="brand" href="#" aria-label="Kontur — Startseite">
+            <span class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 100 100" fill="none"><path d="M33 27v46M69 27 41 50l28 23" stroke="currentColor" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/><circle cx="75" cy="50" r="5" fill="currentColor"/></svg>
+            </span>
+            <span class="logo">Kontur</span>
+          </a>
+          <button id="sidebar-collapse" class="sidebar-icon-btn" type="button" aria-label="Seitenleiste einklappen" title="Seitenleiste einklappen">
+            <span class="k-icon k-icon--chevron-left"></span>
+          </button>
+        </div>
 
-  <header class="topbar">
-    <a class="brand" href="/">
-      <span class="brand-mark"></span>
-      <div class="brand-text">
-        <span class="logo">Kontur</span>
-        <span class="tag">Europäische Firmendatenbank</span>
-      </div>
-    </a>
-    <nav class="topnav" aria-label="Bereiche">
-      <a id="nav-screener" class="topnav-link" href="#screen">Screener</a>
-    </nav>
-  </header>
+        <div class="sidebar-block">
+          <a id="nav-new" class="sidebar-new" href="#">
+            <span class="k-icon k-icon--plus"></span> Neue Suche
+          </a>
+        </div>
 
-  <main class="app">
-    <section class="hero">
-      <div class="hero-shell">
-        <h1 class="hero-title">Finde jedes europäische Unternehmen.</h1>
-        <p class="hero-subtitle">
-          Ein Interface für <span class="hero-count" id="hero-count">14</span> nationale
-          Register — live, offene Daten, kommerziell nutzbar.
-        </p>
-        <form id="search-form" class="search-shell">
-          <div class="search-row">
-            <div class="country-select-wrap">
-              <select id="country-select" class="country-select">
-                <option value="">Alle Länder</option>
-              </select>
-            </div>
-            <input
-              id="search-input"
-              class="search-input"
-              type="search"
-              placeholder="Firmenname, Registernummer oder LEI…"
-              autocomplete="off"
-              autofocus
-            />
-            <kbd class="kbd-hint" title="Tastenkürzel zur Fokussierung">⌘ K</kbd>
-            <button id="search-button" class="search-button" type="submit">
-              <span>Suchen</span>
-            </button>
+        <nav class="sidebar-nav" aria-label="Bereiche">
+          <a id="nav-search" class="nav-item" href="#">
+            <span class="k-icon k-icon--search"></span> Firmensuche
+          </a>
+          <a id="nav-screener" class="nav-item" href="#screen">
+            <span class="k-icon k-icon--dashboard"></span> Screener
+            <span class="nav-tag">AT</span>
+          </a>
+        </nav>
+
+        <div class="sidebar-sep"></div>
+
+        <div class="sidebar-section">
+          <p class="sidebar-label">Zuletzt angesehen</p>
+          <ul id="recent-list" class="recent-list"></ul>
+          <p id="recent-empty" class="recent-empty">Geöffnete Firmen erscheinen hier.</p>
+        </div>
+
+        <div class="sidebar-foot">
+          <span class="foot-avatar" aria-hidden="true"><span class="k-icon k-icon--globe"></span></span>
+          <div class="foot-text">
+            <div class="foot-title"><span id="sidebar-count">–</span> Register</div>
+            <div class="foot-sub">EU · EWR · UK, live</div>
           </div>
-          <p id="search-status" class="search-status" aria-live="polite"></p>
-        </form>
-        <nav id="country-strip" class="country-strip" aria-label="Länder-Abdeckung"></nav>
+        </div>
       </div>
-    </section>
+    </aside>
+    <div class="sidebar-backdrop" id="sidebar-backdrop" aria-hidden="true"></div>
 
-    <section id="empty-state" class="empty-state">
-      <p class="empty-title">Probier eine dieser Suchen:</p>
-      <div class="example-chips" id="example-chips"></div>
-    </section>
+    <div class="main-col">
+      <header class="mobilebar">
+        <button id="sidebar-open-mobile" class="sidebar-icon-btn" type="button" aria-label="Navigation öffnen">
+          <span class="k-icon k-icon--menu"></span>
+        </button>
+        <a class="brand" href="#">
+          <span class="brand-mark brand-mark--sm" aria-hidden="true">
+            <svg viewBox="0 0 100 100" fill="none"><path d="M33 27v46M69 27 41 50l28 23" stroke="currentColor" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/><circle cx="75" cy="50" r="5" fill="currentColor"/></svg>
+          </span>
+          <span class="logo">Kontur</span>
+        </a>
+      </header>
+      <button id="sidebar-expand" class="sidebar-expand" type="button" aria-label="Seitenleiste ausklappen" title="Seitenleiste ausklappen">
+        <span class="k-icon k-icon--chevron-right"></span>
+      </button>
 
-    <nav id="result-facets" class="result-facets" aria-label="Treffer pro Land filtern" hidden></nav>
-    <section id="results" class="results"></section>
-    <section id="detail" class="detail-wrap" hidden></section>
-    <section id="screener" class="screener" hidden></section>
-  </main>
+      <main class="app">
+        <section class="hero">
+          <div class="hero-intro">
+            <span class="hero-mark" aria-hidden="true">
+              <svg viewBox="0 0 100 100" fill="none"><path d="M33 27v46M69 27 41 50l28 23" stroke="currentColor" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/><circle cx="75" cy="50" r="5" fill="currentColor"/></svg>
+            </span>
+            <h1 class="hero-title">Finde jedes europäische Unternehmen.</h1>
+            <p class="hero-subtitle">
+              Ein Interface für <span class="hero-count" id="hero-count">14</span> nationale
+              Register — live, offene Daten, kommerziell nutzbar.
+            </p>
+          </div>
+          <form id="search-form" class="search-shell">
+            <div class="search-row">
+              <div class="country-select-wrap">
+                <select id="country-select" class="country-select" aria-label="Land">
+                  <option value="">Alle Länder</option>
+                </select>
+              </div>
+              <input
+                id="search-input"
+                class="search-input"
+                type="search"
+                placeholder="Firmenname, Registernummer oder LEI…"
+                autocomplete="off"
+                autofocus
+              />
+              <kbd class="kbd-hint" title="Tastenkürzel zur Fokussierung">⌘ K</kbd>
+              <button id="search-button" class="search-button" type="submit">
+                <span class="k-icon k-icon--search"></span><span>Suchen</span>
+              </button>
+            </div>
+            <p id="search-status" class="search-status" aria-live="polite"></p>
+          </form>
+          <nav id="country-strip" class="country-strip" aria-label="Länder-Abdeckung"></nav>
+        </section>
 
-  <button id="scroll-top" class="scroll-top" type="button" aria-label="Zurück nach oben" hidden>↑</button>
-  <div id="toast" class="toast" hidden></div>
+        <section id="empty-state" class="empty-state">
+          <p class="empty-title">Probier eine dieser Suchen</p>
+          <div class="example-chips" id="example-chips"></div>
+        </section>
 
-  <footer class="site-footer">
-    <div class="footer-inner">
-      <p class="footer-disclaimer">
-        <strong>Kontur</strong> aggregiert öffentliche Register-Daten. Die Angaben sind
-        <strong>keine amtlichen Auszüge</strong> und werden ohne Gewähr bereitgestellt.
-      </p>
-      <div id="footer-sources" class="footer-sources"></div>
+        <nav id="result-facets" class="result-facets" aria-label="Treffer pro Land filtern" hidden></nav>
+        <section id="results" class="results"></section>
+        <section id="detail" class="detail-wrap" hidden></section>
+        <section id="screener" class="screener" hidden></section>
+      </main>
+
+      <footer class="site-footer">
+        <div class="footer-inner">
+          <p class="footer-disclaimer">
+            <strong>Kontur</strong> aggregiert öffentliche Register-Daten. Die Angaben sind
+            <strong>keine amtlichen Auszüge</strong> und werden ohne Gewähr bereitgestellt.
+          </p>
+          <div id="footer-sources" class="footer-sources"></div>
+        </div>
+      </footer>
     </div>
-  </footer>
+  </div>
+
+  <button id="scroll-top" class="scroll-top" type="button" aria-label="Zurück nach oben" hidden>
+    <span class="k-icon k-icon--chevron-left"></span>
+  </button>
+  <div id="toast" class="toast" hidden></div>
 
   <script type="module" src="/app.js"></script>
 </body>

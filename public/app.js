@@ -11,6 +11,14 @@ const els = {
   hero: document.querySelector('.hero'),
   screener: document.getElementById('screener'),
   navScreener: document.getElementById('nav-screener'),
+  navSearch: document.getElementById('nav-search'),
+  navNew: document.getElementById('nav-new'),
+  sidebarCollapse: document.getElementById('sidebar-collapse'),
+  sidebarExpand: document.getElementById('sidebar-expand'),
+  sidebarOpenMobile: document.getElementById('sidebar-open-mobile'),
+  sidebarBackdrop: document.getElementById('sidebar-backdrop'),
+  sidebarCount: document.getElementById('sidebar-count'),
+  recentList: document.getElementById('recent-list'),
   form: document.getElementById('search-form'),
   countrySelect: document.getElementById('country-select'),
   countryStrip: document.getElementById('country-strip'),
@@ -48,6 +56,8 @@ const EXAMPLES = [
 
 // ─────────── Init ───────────
 async function init() {
+  initSidebar();
+  renderRecent();
   try {
     const res = await fetch('/api/countries');
     const data = await res.json();
@@ -57,6 +67,7 @@ async function init() {
     return;
   }
   els.heroCount.textContent = countries.length;
+  els.sidebarCount.textContent = countries.length;
   renderCountryOptions(countries);
   renderCountryStrip(countries);
   renderFooterSources(countries);
@@ -80,6 +91,89 @@ async function init() {
   els.results.addEventListener('click', onResultsClick);
 
   onHashChange();
+}
+
+// ─────────── Sidebar ───────────
+// Desktop: collapsible column (state remembered per browser). Below 900px the
+// sidebar is an off-canvas drawer opened from the mobile bar.
+const mqMobile = window.matchMedia('(max-width: 899px)');
+const SIDEBAR_KEY = 'kontur.sidebar';
+
+function initSidebar() {
+  try {
+    if (localStorage.getItem(SIDEBAR_KEY) === 'collapsed') document.body.classList.add('sidebar-collapsed');
+  } catch { /* storage blocked */ }
+  els.sidebarCollapse.addEventListener('click', () => setSidebar(false));
+  els.sidebarExpand.addEventListener('click', () => setSidebar(true));
+  els.sidebarOpenMobile.addEventListener('click', () => setSidebar(true));
+  els.sidebarBackdrop.addEventListener('click', () => setSidebar(false));
+  els.navNew.addEventListener('click', (e) => {
+    e.preventDefault();
+    els.input.value = '';
+    setHash({});
+    els.input.focus();
+  });
+  // "Firmensuche" returns to the last result list instead of a blank page.
+  els.navSearch.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (lastSearchKey) {
+      const [q, c] = lastSearchKey.split('::');
+      setHash({ q, c });
+    } else {
+      setHash({});
+      els.input.focus();
+    }
+  });
+}
+
+function setSidebar(open) {
+  if (mqMobile.matches) {
+    document.body.classList.toggle('sidebar-open', open);
+    return;
+  }
+  document.body.classList.toggle('sidebar-collapsed', !open);
+  try { localStorage.setItem(SIDEBAR_KEY, open ? 'open' : 'collapsed'); } catch { /* storage blocked */ }
+}
+
+// "Zuletzt angesehen" — the last opened companies, per browser.
+const RECENT_KEY = 'kontur.recent';
+const RECENT_MAX = 8;
+
+function loadRecent() {
+  try { return JSON.parse(localStorage.getItem(RECENT_KEY)) || []; } catch { return []; }
+}
+function pushRecent(c) {
+  const entry = { country: c.country, id: c.nationalId, name: c.legalName || c.nationalId };
+  const list = [entry, ...loadRecent().filter((r) => !(r.country === entry.country && r.id === entry.id))]
+    .slice(0, RECENT_MAX);
+  try { localStorage.setItem(RECENT_KEY, JSON.stringify(list)); } catch { /* storage blocked */ }
+  renderRecent();
+}
+function renderRecent() {
+  const state = parseHash();
+  els.recentList.innerHTML = '';
+  for (const r of loadRecent()) {
+    const li = document.createElement('li');
+    const a = document.createElement('a');
+    a.className = 'recent-item';
+    a.href = `#${new URLSearchParams({ co: `${r.country}:${r.id}` })}`;
+    a.title = r.name;
+    a.innerHTML = '<span class="recent-cc"></span><span class="recent-name"></span>';
+    a.querySelector('.recent-cc').textContent = r.country;
+    a.querySelector('.recent-name').textContent = r.name;
+    if (state.kind === 'detail' && state.country === r.country && state.id === r.id) a.classList.add('active');
+    li.appendChild(a);
+    els.recentList.appendChild(li);
+  }
+}
+
+// Two-letter monogram for the avatar circles; legal-form words don't count.
+const LEGAL_FORM_WORD = /^(ag|gmbh|mbh|se|sa|sas|asa|oy|oyj|ab|as|plc|ltd|limited|spa|srl|bv|nv|kg|og|co|und|and|the|der|die|das)$/i;
+function initials(name) {
+  const words = String(name || '').split(/[\s\-–,.()/&]+/)
+    .filter((w) => /^[\p{L}\p{N}]/u.test(w) && !LEGAL_FORM_WORD.test(w));
+  const letters = words.slice(0, 2).map((w) => w[0]).join('');
+  return (letters || String(name || '?').trim()[0] || '?').toUpperCase();
 }
 
 // ─────────── Country strip / dropdown ───────────
@@ -164,7 +258,7 @@ function renderExamples() {
     btn.type = 'button';
     btn.className = 'example-chip';
     btn.innerHTML = `<span class="chip-cc"></span><span></span>`;
-    btn.querySelector('.chip-cc').textContent = ex.cc || '↻';
+    btn.querySelector('.chip-cc').textContent = ex.cc || 'EU';
     btn.querySelectorAll('span')[1].textContent = ex.label;
     btn.addEventListener('click', () => setHash({ q: ex.q, c: ex.cc }));
     els.exampleChips.appendChild(btn);
@@ -209,14 +303,21 @@ function onHashChange() {
   const state = parseHash();
   // The screener is a full-width page of its own: no hero search above it.
   const isScreen = state.kind === 'screen';
+  const prevView = document.body.dataset.view;
+  document.body.dataset.view = state.kind;
+  document.body.classList.remove('sidebar-open');
   els.screener.hidden = !isScreen;
   els.hero.hidden = isScreen;
   els.navScreener.classList.toggle('active', isScreen);
+  els.navSearch.classList.toggle('active', !isScreen);
+  renderRecent();
   if (isScreen) {
     hideDetail();
     els.emptyState.hidden = true;
     els.results.hidden = true;
     els.resultFacets.hidden = true;
+    // Filter changes re-enter here too; only a page switch jumps to the top.
+    if (prevView !== 'screen') window.scrollTo({ top: 0, behavior: 'instant' });
     renderScreener(state.filters);
     return;
   }
@@ -489,10 +590,15 @@ function renderHit(dto) {
   li.dataset.country = dto.country;
   li.dataset.id = dto.nationalId;
   li.innerHTML = `
-    <span class="hit-name"></span>
+    <span class="hit-avatar" aria-hidden="true"></span>
+    <span class="hit-main">
+      <span class="hit-name"></span>
+      <span class="hit-id copy-id" title="Zum Kopieren klicken"></span>
+    </span>
     <span class="hit-status${dto.status === 'dissolved' ? ' dissolved' : ''}"></span>
-    <span class="hit-id copy-id" title="Zum Kopieren klicken"></span>
+    <span class="k-icon k-icon--chevron-right hit-chevron" aria-hidden="true"></span>
   `;
+  li.querySelector('.hit-avatar').textContent = initials(dto.legalName);
   li.querySelector('.hit-name').textContent = dto.legalName || '(ohne Namen)';
   li.querySelector('.hit-status').textContent = dto.status === 'dissolved' ? 'gelöscht' : 'aktiv';
   li.querySelector('.hit-id').textContent = dto.nationalId;
@@ -573,10 +679,17 @@ function renderDetail(c, people, financials, score, documents) {
     <button class="detail-back" type="button" title="Zurück (Esc)"></button>
     <article class="detail">
       <header class="detail-head">
-        <button class="detail-close" type="button" aria-label="Detail schließen" title="Schließen (Esc)">×</button>
-        <h2></h2>
-        <p class="hit-id copy-id" title="Zum Kopieren klicken"></p>
-        <div class="detail-flags"></div>
+        <button class="detail-close" type="button" aria-label="Detail schließen" title="Schließen (Esc)">
+          <span class="k-icon k-icon--x"></span>
+        </button>
+        <div class="detail-ident">
+          <span class="detail-avatar" aria-hidden="true"></span>
+          <div>
+            <h2></h2>
+            <p class="hit-id copy-id" title="Zum Kopieren klicken"></p>
+            <div class="detail-flags"></div>
+          </div>
+        </div>
       </header>
       <div class="detail-body">
         <section class="detail-section detail-col-span">
@@ -652,6 +765,8 @@ function renderDetail(c, people, financials, score, documents) {
   idEl.addEventListener('click', () => copyToClipboard(c.nationalId));
 
   els.detail.querySelector('h2').textContent = c.legalName || '(ohne Namen)';
+  els.detail.querySelector('.detail-avatar').textContent = initials(c.legalName);
+  pushRecent(c);
 
   const flagsEl = els.detail.querySelector('.detail-flags');
   const flags = [];
@@ -697,7 +812,10 @@ function renderDetail(c, people, financials, score, documents) {
     } else {
       dd.textContent = String(val);
     }
-    dl.appendChild(dt); dl.appendChild(dd);
+    const field = document.createElement('div');
+    field.className = 'detail-field';
+    field.append(dt, dd);
+    dl.appendChild(field);
   }
 
   if (c.parent || c.ultimateParent) {
@@ -1102,21 +1220,41 @@ function renderScreener(filters) {
   bar.querySelector('[name=konzern]').value = f.konzern || '';
   bar.querySelector('[name=cash]').value = f.cash || '';
   bar.querySelector('[name=verschuldung]').value = f.verschuldung || '';
+  bar.querySelector('[name=website]').value = f.website || '';
   bar.querySelector('[name=rechtsform]').value = f.rechtsform || '';
   const q = bar.querySelector('[name=q]');
   if (document.activeElement !== q) q.value = f.q || '';
   loadScreener(f);
 }
 
+// [data-stat key, label, tooltip, icon, tone]
+const SCREEN_STATS = [
+  ['total', 'Treffer', 'Firmen für die gewählten Filter', 'filter', 'brand'],
+  ['ingested', 'Geladen', 'Firmen mit eingelesenem Jahresabschluss', 'check', 'good'],
+  ['prefilter', 'Vorfilter', 'Firmen mit Lagebericht oder Bestätigungsvermerk (mittelgroß/groß)', 'database', 'info'],
+  ['universe', 'Universe', 'Firmen mit Jahresabschluss im Firmenbuch', 'building', ''],
+];
+
 function buildScreenerShell() {
+  const stats = SCREEN_STATS.map(([key, label, title, icon, tone]) => `
+      <div class="stat-card" title="${title}">
+        <div class="stat-top">
+          <span class="stat-label">${label}</span>
+          <span class="stat-icon${tone ? ` stat-icon--${tone}` : ''}"><span class="k-icon k-icon--${icon}"></span></span>
+        </div>
+        <div class="stat-value" data-stat="${key}">–</div>
+      </div>`).join('');
   els.screener.innerHTML = `
     <header class="screener-head">
       <div>
+        <p class="page-eyebrow"><span class="k-icon k-icon--sparkles"></span> Investor-Screening</p>
         <h2 class="screener-title">Screener <span class="cg-code">AT</span></h2>
+        <p class="screener-lede">Österreichische Firmen mit Jahresabschluss nach EBITDA-Band, Cluster, Cashflow und Verschuldung filtern.</p>
         <p class="screener-meta" aria-live="polite"></p>
       </div>
-      <a class="screener-export" href="#" download>CSV exportieren</a>
+      <a class="screener-export" href="#" download><span class="k-icon k-icon--download"></span> CSV exportieren</a>
     </header>
+    <div class="stat-grid">${stats}</div>
     <form class="screener-bar" onsubmit="return false">
       <label><span>EBITDA-Band</span><select name="band"></select></label>
       <label><span>Cluster</span><select name="cluster">
@@ -1147,6 +1285,13 @@ function buildScreenerShell() {
       <label><span>Verschuldung</span><select name="verschuldung">
         <option value="">Alle</option><option value="nettocash">Nettocash</option>
         <option value="max1">≤ 1× EBITDA</option><option value="max2">≤ 2× EBITDA</option>
+      </select></label>
+      <label><span>Website</span><select name="website">
+        <option value="">Alle</option>
+        <option value="fn">verifiziert (FN im Impressum)</option>
+        <option value="gefunden">gefunden (FN, Gruppe, Name + PLZ)</option>
+        <option value="ohne">nicht gefunden</option>
+        <option value="offen">noch nicht geprüft</option>
       </select></label>
       <label><span>Rechtsform</span><select name="rechtsform">
         <option value="">übernahmefähig</option><option value="alle">alle</option>
@@ -1209,6 +1354,7 @@ function updateScreenHash() {
       konzern: bar.querySelector('[name=konzern]').value,
       cash: bar.querySelector('[name=cash]').value,
       verschuldung: bar.querySelector('[name=verschuldung]').value,
+      website: bar.querySelector('[name=website]').value,
       rechtsform: bar.querySelector('[name=rechtsform]').value,
       q: bar.querySelector('[name=q]').value.trim(),
       sort: cur.sort, dir: cur.dir,
@@ -1223,6 +1369,7 @@ async function loadScreener(f) {
   if (f.konzern) params.set('konzern', f.konzern);
   if (f.cash) params.set('cash', f.cash);
   if (f.verschuldung) params.set('verschuldung', f.verschuldung);
+  if (f.website) params.set('website', f.website);
   if (f.rechtsform) params.set('rechtsform', f.rechtsform);
   if (f.q) params.set('q', f.q);
   els.screener.querySelector('.screener-export').href = `/api/screen.csv?${params}`;
@@ -1239,8 +1386,11 @@ async function loadScreener(f) {
     if (!res.ok) throw new Error(data.error || 'Screener nicht verfügbar');
     const m = data.meta || {};
     const nf = (n) => (n ?? 0).toLocaleString('de-AT');
-    meta.textContent = `${nf(data.total)} Firmen · geladen: ${nf(m.ingested)} von ${nf(m.prefilter)} Vorfilter-Firmen`
-      + ` · Universe: ${nf(m.universe)} Firmen mit Jahresabschluss${m.feedUntil ? ` · Feed bis ${formatDate(m.feedUntil)}` : ''}`;
+    const counts = { total: data.total, ingested: m.ingested, prefilter: m.prefilter, universe: m.universe };
+    for (const [key, n] of Object.entries(counts)) {
+      els.screener.querySelector(`[data-stat="${key}"]`).textContent = nf(n);
+    }
+    meta.textContent = m.feedUntil ? `Firmenbuch-Feed bis ${formatDate(m.feedUntil)}` : '';
     tbody.innerHTML = '';
     if (!data.rows.length) {
       tbody.innerHTML = `<tr><td colspan="${SCREEN_COLUMNS.length}" class="screener-empty">Keine Firmen für diese Filter.</td></tr>`;
@@ -1277,6 +1427,8 @@ function renderScreenRow(r) {
         b.title = title;
         td.querySelector('.sf-name').append(' ', b);
       }
+      const web = websiteLine(r);
+      if (web) td.append(web);
       return td;
     },
     () => clusterCell(r),
@@ -1301,6 +1453,34 @@ function renderScreenRow(r) {
   ];
   for (const make of cells) tr.appendChild(make());
   return tr;
+}
+
+// Website found in Phase 5: the domain as a link plus how it was matched.
+// Unverified finds carry a "?"; a namesake's domain is not shown at all.
+const WEBSITE_MATCH = {
+  fn:        ['FN ✓', 'Impressum nennt die Firmenbuchnummer dieser Firma'],
+  gruppe:    ['Gruppe', 'Website der Gruppe: das Impressum nennt eine verbundene Firma'],
+  name_plz:  ['Name + PLZ?', 'Firmenname und PLZ auf der Website, aber keine FN gefunden — nicht verifiziert'],
+  blockiert: ['blockiert?', 'Domain antwortet, verweigert aber den Abruf (Bot-Schutz) — nicht geprüft, evtl. fremde Domain'],
+};
+function websiteLine(r) {
+  const match = WEBSITE_MATCH[r.website_status];
+  if (!match || !r.website_domain) return null;
+  const line = document.createElement('span');
+  line.className = `sf-web web-${r.website_status}`;
+  const a = document.createElement('a');
+  a.href = r.website_url || `https://${r.website_domain}`;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  a.textContent = r.website_domain;
+  a.addEventListener('click', (e) => e.stopPropagation());
+  const tag = document.createElement('span');
+  tag.className = 'sf-web-tag';
+  tag.textContent = match[0];
+  line.title = [match[1], r.websiteGruppe && `Impressum nennt: ${r.websiteGruppe}`,
+    r.website_evidence && `„${r.website_evidence}“`, r.impressum_url].filter(Boolean).join('\n');
+  line.append(a, ' ', tag);
+  return line;
 }
 
 // Cluster code as a pill plus segment; low confidence is drawn dashed. The
@@ -1369,7 +1549,9 @@ function onKeyDown(e) {
     return;
   }
   if (e.key === 'Escape') {
-    if (!els.detail.hidden) {
+    if (document.body.classList.contains('sidebar-open')) {
+      setSidebar(false);
+    } else if (!els.detail.hidden) {
       if (lastSearchKey) {
         const [q, c] = lastSearchKey.split('::');
         setHash({ q, c });

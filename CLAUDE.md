@@ -32,6 +32,9 @@ server/
 public/
 ├── index.html, app.js, app.css
 └── design/                Design-Tokens (nur hier editieren, nie in app.css)
+                           Look & Feel nach clausl-ki (Slate, Inter, Sidebar-Shell),
+                           Corporate Color Iris #6e56cf (--brand-*); Icons = Lucide-
+                           Masken (.k-icon--*, --i-*) in components.css
 data/kontur.db             SQLite-Datenbank (gitignored)
 .env                       Credentials — INPI_USERNAME/PASSWORD, FIRMENBUCH_TOKEN
 ```

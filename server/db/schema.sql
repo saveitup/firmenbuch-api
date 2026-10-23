@@ -230,3 +230,21 @@ CREATE TABLE IF NOT EXISTS at_cluster (
   updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_atcluster_cluster ON at_cluster(cluster);
+
+-- Website discovery (plans/investor-screening.md, Phase 5): one row per
+-- checked firm. A site counts as verified only when its homepage or
+-- Impressum carries the firm's FN; Name + PLZ is the weaker fallback.
+CREATE TABLE IF NOT EXISTS at_website (
+  national_id_canon  TEXT PRIMARY KEY,
+  status             TEXT NOT NULL,                    -- fn | gruppe | name_plz | andere_fn | blockiert | nicht_gefunden | fehler
+  domain             TEXT,
+  url                TEXT,                             -- homepage after redirects
+  impressum_url      TEXT,                             -- page that carried the match
+  evidence           TEXT,                             -- text around the match
+  other_fns_json     TEXT,                             -- [{fn, name, plz, related}] other FNs on the site
+  source             TEXT,                             -- firmenbuch | domain | suche | manuell
+  candidates_json    TEXT,                             -- [{domain, result}] tried in order
+  method             TEXT NOT NULL DEFAULT 'auto',     -- auto | manuell
+  checked_at         TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_atwebsite_status ON at_website(status);
