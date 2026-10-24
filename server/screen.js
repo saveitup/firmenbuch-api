@@ -15,6 +15,7 @@ const SORTS = {
   ebitda: 'ebitda', umsatz: 'umsatz_oder_roh', bilanzsumme: 'bilanzsumme',
   ek_quote: 'ek_quote', name: 'name', stichtag: 'stichtag', wachstum: 'ebitda_wachstum',
   fcf: 'fcf_operativ', cash_conversion: 'cash_conversion', net_debt_ebitda: 'net_debt_ebitda', cluster: 'cluster',
+  gruendung: 'web_gruendung', jobs: 'web_jobs',
 };
 
 // A net group/shareholder balance above this share of the Bilanzsumme
@@ -86,6 +87,26 @@ const BASE_SQL = `
       w.impressum_url                                   AS impressum_url,
       w.evidence                                        AS website_evidence,
       w.other_fns_json                                  AS website_other_json,
+      ws.pages                                          AS web_pages,
+      ws.jobs                                           AS web_jobs,
+      ws.jobs_fuehrung                                  AS web_jobs_fuehrung,
+      ws.jobs_gf                                        AS web_jobs_gf,
+      ws.jobs_extern                                    AS web_jobs_extern,
+      ws.nachfolge                                      AS web_nachfolge,
+      ws.familienunternehmen                            AS web_familie,
+      ws.generation                                     AS web_generation,
+      ws.gruppe_hinweis                                 AS web_gruppe_hinweis,
+      ws.languages_json                                 AS web_languages_json,
+      ws.export_hinweis                                 AS web_export,
+      ws.export_laender                                 AS web_export_laender,
+      ws.export_quote                                   AS web_export_quote,
+      ws.zertifikate_json                               AS web_zertifikate_json,
+      ws.standorte                                      AS web_standorte,
+      ws.gruendungsjahr                                 AS web_gruendung,
+      ws.webshop                                        AS web_shop,
+      ws.b2b_portal                                     AS web_b2b,
+      ws.zweite_ebene                                   AS web_zweite_ebene,
+      ws.evidence_json                                  AS web_evidence_json,
       EXISTS (SELECT 1 FROM at_register_documents d WHERE d.national_id_canon = c.national_id_canon AND d.doc_code = '49')  AS konzern,
       EXISTS (SELECT 1 FROM at_register_documents d WHERE d.national_id_canon = c.national_id_canon AND d.doc_code = '136') AS liquidation
     FROM ranked f
@@ -96,6 +117,7 @@ const BASE_SQL = `
     LEFT JOIN cashflow_summary s ON s.country = 'AT' AND s.national_id_canon = f.national_id_canon
     LEFT JOIN at_cluster k ON k.national_id_canon = f.national_id_canon
     LEFT JOIN at_website w ON w.national_id_canon = f.national_id_canon
+    LEFT JOIN web_signals ws ON ws.domain = w.domain AND w.status IN ('fn', 'gruppe') AND ws.pages > 0
     WHERE f.rn = 1
   )
   SELECT * FROM rows
@@ -133,6 +155,17 @@ export function screenAt(params = {}) {
   if (params.website === 'gefunden') where.push(`website_status IN ('fn', 'gruppe', 'name_plz')`);
   if (params.website === 'ohne') where.push(`website_status IN ('nicht_gefunden', 'andere_fn', 'blockiert', 'fehler')`);
   if (params.website === 'offen') where.push('website_status IS NULL');
+  // Website signals (crawled FN/group sites only).
+  const WEB_SIGNALS = {
+    nachfolge: 'web_nachfolge = 1',
+    fuehrung: 'web_jobs_fuehrung > 0',
+    familie: 'web_familie = 1',
+    export: 'web_export = 1',
+    zertifiziert: `web_zertifikate_json <> '[]'`,
+    kein_shop: 'web_pages > 0 AND web_shop = 0',
+    ohne_gruppe: `web_pages > 0 AND web_gruppe_hinweis = 0 AND website_status = 'fn'`,
+  };
+  if (WEB_SIGNALS[params.signal]) where.push(WEB_SIGNALS[params.signal]);
   if (params.verschuldung === 'nettocash') where.push('net_debt <= 0');
   if (params.verschuldung === 'max1') where.push('net_debt_ebitda <= 1');
   if (params.verschuldung === 'max2') where.push('net_debt_ebitda <= 2');
@@ -167,12 +200,16 @@ function withOrgane(r) {
   try { organe = r.organe_json ? JSON.parse(r.organe_json) : []; } catch {}
   const gf = organe.filter((o) => o.roleCode === 'GF' || o.roleCode === 'VM' || o.roleCode === 'KP');
   const jahrgaenge = gf.map((o) => o.geburtsjahr).filter(Boolean);
-  let cfWarnings = [], cfJahre = [], clusterBasis = [], websiteOther = [];
+  let cfWarnings = [], cfJahre = [], clusterBasis = [], websiteOther = [], webLanguages = [], webZertifikate = [], webEvidence = {};
   try { cfWarnings = r.cf_warnings_json ? JSON.parse(r.cf_warnings_json) : []; } catch {}
   try { cfJahre = r.cf_jahre_json ? JSON.parse(r.cf_jahre_json) : []; } catch {}
   try { clusterBasis = r.cluster_basis_json ? JSON.parse(r.cluster_basis_json) : []; } catch {}
   try { websiteOther = r.website_other_json ? JSON.parse(r.website_other_json) : []; } catch {}
-  const { organe_json, cf_warnings_json, cf_jahre_json, cluster_basis_json, website_other_json, ...rest } = r;
+  try { webLanguages = r.web_languages_json ? JSON.parse(r.web_languages_json) : []; } catch {}
+  try { webZertifikate = r.web_zertifikate_json ? JSON.parse(r.web_zertifikate_json) : []; } catch {}
+  try { webEvidence = r.web_evidence_json ? JSON.parse(r.web_evidence_json) : {}; } catch {}
+  const { organe_json, cf_warnings_json, cf_jahre_json, cluster_basis_json, website_other_json,
+    web_languages_json, web_zertifikate_json, web_evidence_json, ...rest } = r;
   return {
     ...rest,
     konzern: !!r.konzern,
@@ -182,6 +219,10 @@ function withOrgane(r) {
     cfJahre,
     clusterBasis,
     websiteOther,
+    webLanguages,
+    webZertifikate,
+    // One quote per signal is enough for the tooltip; the rest stays in the DB.
+    webBelege: Object.fromEntries(Object.entries(webEvidence).map(([k, v]) => [k, v[0]?.quote || null])),
     // Another FN on the site that belongs to a related firm: the website is
     // the group's (often a family holding — context, not an exclusion).
     websiteGruppe: websiteOther.filter((o) => o.related).map((o) => `FN ${o.fn} ${o.name || ''}`.trim()).join(' · ') || null,
@@ -212,6 +253,12 @@ const CSV_COLUMNS = [
   ['cluster', 'Cluster'], ['cluster_segment', 'Segment'], ['cluster_confidence', 'Cluster-Konfidenz'],
   ['website_url', 'Website'], ['website_status', 'Website-Abgleich'], ['impressum_url', 'Impressum'],
   ['websiteGruppe', 'Website nennt (Gruppe)'],
+  ['web_gruendung', 'Gründungsjahr (Website)'], ['web_familie', 'Familienunternehmen'], ['web_generation', 'Generation'],
+  ['web_nachfolge', 'Nachfolge-Hinweis'], ['web_jobs', 'Offene Stellen'], ['web_jobs_fuehrung', 'davon Führung'],
+  ['web_jobs_gf', 'davon GF'], ['web_jobs_extern', 'Jobportal extern'], ['webLanguagesCsv', 'Sprachen'],
+  ['web_export_laender', 'Exportländer'], ['web_export_quote', 'Exportquote'], ['webZertifikateCsv', 'Zertifikate'],
+  ['web_standorte', 'Standorte'], ['web_gruppe_hinweis', 'Gruppenhinweis (Website)'], ['web_shop', 'Webshop'],
+  ['web_b2b', 'B2B-Portal'],
   ['stichtag', 'Stichtag'], ['umsatz', 'Umsatz'], ['rohergebnis', 'Rohergebnis'], ['ebitda', 'EBITDA'],
   ['ebitda_vj', 'EBITDA Vorjahr'], ['ebit', 'Betriebserfolg'], ['jahresergebnis', 'Jahresergebnis'],
   ['bilanzsumme', 'Bilanzsumme'], ['eigenkapital', 'Eigenkapital'], ['ek_quote', 'EK-Quote'],
@@ -232,6 +279,9 @@ export function toCsv(rows) {
     return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const lines = [CSV_COLUMNS.map(([, h]) => h).join(';')];
-  for (const r of rows) lines.push(CSV_COLUMNS.map(([k]) => cell(r[k])).join(';'));
+  for (const r of rows) {
+    const flat = { ...r, webLanguagesCsv: r.webLanguages?.join(' '), webZertifikateCsv: r.webZertifikate?.join(', ') };
+    lines.push(CSV_COLUMNS.map(([k]) => cell(flat[k])).join(';'));
+  }
   return '﻿' + lines.join('\n'); // BOM + ";" so Excel (de-AT) opens it directly
 }

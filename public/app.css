@@ -1656,3 +1656,20 @@ body[data-view="home"] .country-strip { margin: var(--space-4) auto 0; justify-c
 .sf-web-tag { font-family: var(--font-mono); font-size: var(--text-xs); white-space: nowrap; }
 .sf-web.web-fn .sf-web-tag { color: var(--accent-2); }
 .sf-web.web-name_plz a, .sf-web.web-blockiert a { color: var(--muted); }
+
+/* Website signals column (Phase 5) */
+.screener-table td.web-signals { white-space: normal; min-width: 210px; max-width: 300px; }
+.screener-table td.web-signals.muted { color: var(--muted); }
+.ws-tag {
+  display: inline-block;
+  margin: 0 4px 4px 0;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-2);
+  color: var(--fg);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  cursor: help;
+}
+.ws-tag.hot { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.ws-tag.warn { background: transparent; border: 1px dashed var(--muted); color: var(--muted); }

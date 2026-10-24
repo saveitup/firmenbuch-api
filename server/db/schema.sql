@@ -248,3 +248,42 @@ CREATE TABLE IF NOT EXISTS at_website (
   checked_at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_atwebsite_status ON at_website(status);
+
+-- Website crawl (Phase 5): cleaned text of up to 15 pages per verified
+-- domain — no raw HTML — and the deterministic signals drawn from them.
+CREATE TABLE IF NOT EXISTS web_pages (
+  url                TEXT PRIMARY KEY,
+  domain             TEXT NOT NULL,                    -- at_website.domain
+  kind               TEXT,                             -- start | ueber_uns | leistungen | referenzen | team | karriere | news | standorte | zertifikate | kontakt | impressum
+  title              TEXT,
+  text               TEXT,                             -- cleaned, site boilerplate removed
+  http_status        INTEGER,
+  fetched_at         TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_webpages_domain ON web_pages(domain);
+
+CREATE TABLE IF NOT EXISTS web_signals (
+  domain             TEXT PRIMARY KEY,
+  pages              INTEGER,
+  jobs               INTEGER,                          -- ads with a gender marker "(m/w/d)"
+  jobs_fuehrung      INTEGER,                          -- of those: Leiter/Head/Management
+  jobs_gf            INTEGER,                          -- of those: Geschäftsführung/Nachfolge
+  jobs_extern        TEXT,                             -- external job portal (Personio, …)
+  nachfolge          INTEGER,                          -- succession mentioned (0/1)
+  familienunternehmen INTEGER,
+  generation         INTEGER,                          -- "in 3. Generation"
+  gruppe_hinweis     INTEGER,                          -- "Teil der …-Gruppe" on the site
+  languages_json     TEXT,                             -- ["de","en",…]
+  export_hinweis     INTEGER,
+  export_laender     INTEGER,
+  export_quote       REAL,
+  zertifikate_json   TEXT,                             -- ["ISO 9001",…]
+  standorte          INTEGER,
+  gruendungsjahr     INTEGER,
+  webshop            INTEGER,
+  b2b_portal         INTEGER,
+  zweite_ebene       INTEGER,                          -- team page names a second management level
+  evidence_json      TEXT,                             -- {signal: [{url, quote}]}
+  meta_json          TEXT,                             -- what only the HTML showed: languages, shop, job portals, job links
+  crawled_at         TEXT NOT NULL DEFAULT (datetime('now'))
+);

@@ -493,6 +493,26 @@ Tabelle `at_website`, Tests `npm run check:web`):
   für 60 %, FN-verifiziert 43 % — Exit (≥ 70 % verifiziert) **nicht
   erreicht**. Unabhängige Firmen: 48 % FN-verifiziert. Stichprobe der
   FN-Treffer: alle echte Impressum-Angaben.
+- Crawler v1 (`server/web/crawler.js`, `server/web/signals.js`,
+  `npm run crawl:at-web`, Tests in `npm run check:web`): je verifizierter
+  Domain (FN + Gruppe) Startseite + bis zu 14 Seiten nach Art (Impressum,
+  Über uns/Geschichte, Leistungen, Karriere + Stellenliste, Referenzen,
+  Team, Standorte, Zertifikate, News, Kontakt), nur in der Sprache der
+  Startseite. `web_pages` hält bereinigten Text ohne Navigation, Header,
+  Footer (außer Startseite), Cookie-Banner und site-weite Wiederholzeilen;
+  kein Roh-HTML. Was nur im HTML steht (Sprachversionen über hreflang und
+  Umschalter, Warenkorb, externe Jobportale, Linktexte der Stellenliste),
+  liegt in `web_signals.meta_json`. Damit rechnet
+  `npm run crawl:at-web -- --resignal` die Signale ohne neue Requests neu.
+- Signale mit Quell-URL und Zitat (`web_signals.evidence_json`): offene
+  Stellen = Zeilen mit „(m/w/d)“-Marker, davon Führung (ohne Bau-/Projekt-
+  leiter) und GF/Vorstand/Nachfolge; Nachfolge-Text (Generationswechsel
+  nur, wenn nicht historisch datiert); Familienunternehmen und Generation;
+  „Teil der …-Gruppe“; Sprachen, Exportquote, Exportländer; 23
+  Zertifikatstypen; Standorte (Zahl oder PLZ auf Standort-/Kontaktseiten);
+  Gründungsjahr („gegründet“, „vor N Jahren gegründet“, Zeitleiste der
+  Geschichtsseite, zuletzt „seit“); Webshop nur bei Warenkorb-Funktion;
+  B2B-Portal; zweite Führungsebene auf Team-/Über-uns-Seite.
 - Nächster Hebel: Such-API für die ~350 Firmen ohne FN-Treffer
   (`BRAVE_API_KEY` in `.env`, Code vorhanden, ungetestet), danach
   `npm run discover:at-web -- --retry`.

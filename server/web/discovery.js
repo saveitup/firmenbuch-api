@@ -236,9 +236,10 @@ async function readCapped(res) {
 
 /**
  * Shared fetch context: DNS cache, robots cache, per-host spacing and a page
- * cache, so firms sharing a guessed domain cost one request.
+ * cache, so firms sharing a guessed domain cost one request (off for the
+ * crawler, which fetches every page once).
  */
-export function createContext({ timeoutMs = TIMEOUT_MS } = {}) {
+export function createContext({ timeoutMs = TIMEOUT_MS, cachePages = true } = {}) {
   const resolver = new Resolver({ timeout: 4000, tries: 2 });
   const dnsCache = new Map(), robotsCache = new Map(), pageCache = new Map(), nextSlot = new Map();
   let requests = 0;
@@ -293,13 +294,14 @@ export function createContext({ timeoutMs = TIMEOUT_MS } = {}) {
 
   /** GET an HTML page if robots.txt allows it; cached per URL. */
   async function page(url) {
-    if (!pageCache.has(url)) {
-      pageCache.set(url, (async () => {
-        const u = new URL(url);
-        if (!robotsAllows(await robotsFor(u.origin), u.pathname + u.search)) return { status: 'robots', url, body: null };
-        return rawFetch(url);
-      })());
-    }
+    const load = async () => {
+      const u = new URL(url);
+      if (!robotsAllows(await robotsFor(u.origin), u.pathname + u.search)) return { status: 'robots', url, body: null };
+      return rawFetch(url);
+    };
+    // The crawler visits each page once; caching bodies would only hold memory.
+    if (!cachePages) return load();
+    if (!pageCache.has(url)) pageCache.set(url, load());
     return pageCache.get(url);
   }
 

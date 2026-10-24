@@ -1204,6 +1204,7 @@ const SCREEN_COLUMNS = [
   ['net_debt_ebitda', 'Net Debt', 'Nettoverschuldung (Bank + Anleihen − Kasse − Wertpapiere) in Vielfachen des EBITDA', true],
   ['ek_quote', 'EK-Quote', 'Eigenkapital / Bilanzsumme', true],
   [null, 'Organe', 'Geschäftsführung/Vorstand · Prokura (Kontext, kein Filter)', false],
+  ['gruendung', 'Website-Signale', 'Aus der verifizierten Website (bis 15 Seiten): Gründung, Familie/Generation, Nachfolge, offene Stellen, Export, Sprachen, Zertifikate, Standorte, Webshop. Tooltip je Signal = Fundstelle. Sortiert nach Gründungsjahr.', false],
 ];
 let screenTimer = null;
 // EBITDA decides the mandate band — "5 Mio." for 4,97 Mio. would mislead.
@@ -1221,6 +1222,7 @@ function renderScreener(filters) {
   bar.querySelector('[name=cash]').value = f.cash || '';
   bar.querySelector('[name=verschuldung]').value = f.verschuldung || '';
   bar.querySelector('[name=website]').value = f.website || '';
+  bar.querySelector('[name=signal]').value = f.signal || '';
   bar.querySelector('[name=rechtsform]').value = f.rechtsform || '';
   const q = bar.querySelector('[name=q]');
   if (document.activeElement !== q) q.value = f.q || '';
@@ -1293,6 +1295,16 @@ function buildScreenerShell() {
         <option value="ohne">nicht gefunden</option>
         <option value="offen">noch nicht geprüft</option>
       </select></label>
+      <label><span>Web-Signal</span><select name="signal">
+        <option value="">Alle</option>
+        <option value="nachfolge">Nachfolge-Hinweis</option>
+        <option value="fuehrung">Führungsstelle ausgeschrieben</option>
+        <option value="familie">Familienunternehmen</option>
+        <option value="export">Export / international</option>
+        <option value="zertifiziert">zertifiziert (ISO u. a.)</option>
+        <option value="kein_shop">kein Webshop</option>
+        <option value="ohne_gruppe">kein Gruppenhinweis</option>
+      </select></label>
       <label><span>Rechtsform</span><select name="rechtsform">
         <option value="">übernahmefähig</option><option value="alle">alle</option>
       </select></label>
@@ -1333,7 +1345,7 @@ function buildScreenerShell() {
     if (!th) return;
     const cur = parseHash().filters || {};
     const same = (cur.sort || 'ebitda') === th.dataset.sort;
-    const dir = same ? ((cur.dir || 'desc') === 'desc' ? 'asc' : 'desc') : (['name', 'cluster'].includes(th.dataset.sort) ? 'asc' : 'desc');
+    const dir = same ? ((cur.dir || 'desc') === 'desc' ? 'asc' : 'desc') : (['name', 'cluster', 'gruendung'].includes(th.dataset.sort) ? 'asc' : 'desc');
     setHash({ kind: 'screen', filters: { ...cur, sort: th.dataset.sort, dir } });
   });
   els.screener.querySelector('tbody').addEventListener('click', (e) => {
@@ -1355,6 +1367,7 @@ function updateScreenHash() {
       cash: bar.querySelector('[name=cash]').value,
       verschuldung: bar.querySelector('[name=verschuldung]').value,
       website: bar.querySelector('[name=website]').value,
+      signal: bar.querySelector('[name=signal]').value,
       rechtsform: bar.querySelector('[name=rechtsform]').value,
       q: bar.querySelector('[name=q]').value.trim(),
       sort: cur.sort, dir: cur.dir,
@@ -1370,6 +1383,7 @@ async function loadScreener(f) {
   if (f.cash) params.set('cash', f.cash);
   if (f.verschuldung) params.set('verschuldung', f.verschuldung);
   if (f.website) params.set('website', f.website);
+  if (f.signal) params.set('signal', f.signal);
   if (f.rechtsform) params.set('rechtsform', f.rechtsform);
   if (f.q) params.set('q', f.q);
   els.screener.querySelector('.screener-export').href = `/api/screen.csv?${params}`;
@@ -1450,6 +1464,7 @@ function renderScreenRow(r) {
       if (r.aeltesterGfJahrgang) td.title = `Ältester GF/Vorstand: Jahrgang ${r.aeltesterGfJahrgang}`;
       return td;
     },
+    () => webSignalsCell(r),
   ];
   for (const make of cells) tr.appendChild(make());
   return tr;
@@ -1481,6 +1496,43 @@ function websiteLine(r) {
     r.website_evidence && `„${r.website_evidence}“`, r.impressum_url].filter(Boolean).join('\n');
   line.append(a, ' ', tag);
   return line;
+}
+
+// Website signals as small tags; each tag's tooltip is the quote it rests
+// on. "hot" marks succession signals, "warn" B2C/group hints.
+function webSignalsCell(r) {
+  const td = document.createElement('td');
+  td.className = 'web-signals';
+  if (!r.web_pages) { td.textContent = '—'; return td; }
+  const b = r.webBelege || {};
+  const n = (r.webZertifikate || []).length;
+  const tags = [
+    r.web_gruendung && [`seit ${r.web_gruendung}`, b.gruendungsjahr],
+    r.web_generation ? [`${r.web_generation}. Generation`, b.generation] : r.web_familie && ['Familie', b.familienunternehmen],
+    r.web_jobs_gf ? ['GF gesucht', b.jobs_gf, 'hot'] : r.web_nachfolge && ['Nachfolge', b.nachfolge, 'hot'],
+    r.web_jobs ? [`${r.web_jobs} Jobs${r.web_jobs_fuehrung ? ` · ${r.web_jobs_fuehrung} Führung` : ''}`, b.jobs_fuehrung || b.jobs]
+      : r.web_jobs_extern && ['Jobs extern', r.web_jobs_extern],
+    r.web_export && [r.web_export_quote != null ? `Export ${Math.round(r.web_export_quote * 100)} %`
+      : r.web_export_laender ? `${r.web_export_laender} Länder` : 'Export', b.export],
+    (r.webLanguages || []).length > 1 && [`${r.webLanguages.length} Sprachen`, r.webLanguages.join(' · ').toUpperCase()],
+    n > 0 && [n > 1 ? `${r.webZertifikate[0]} +${n - 1}` : r.webZertifikate[0], r.webZertifikate.join(', ')],
+    r.web_standorte > 1 && [`${r.web_standorte} Standorte`, b.standorte],
+    r.web_zweite_ebene && ['2. Ebene', b.zweite_ebene],
+    r.web_b2b && ['B2B-Portal', b.b2b_portal],
+    r.web_gruppe_hinweis && ['Gruppe lt. Website', b.gruppe_hinweis, 'warn'],
+    r.web_shop && ['Webshop', 'Warenkorb/Shop auf der Website — B2C-Hinweis', 'warn'],
+  ].filter(Boolean);
+  if (!tags.length) { td.textContent = 'keine'; td.classList.add('muted'); }
+  for (const [label, quote, tone] of tags) {
+    const t = document.createElement('span');
+    t.className = `ws-tag${tone ? ` ${tone}` : ''}`;
+    t.textContent = label;
+    if (quote) t.title = quote;
+    td.append(t);
+  }
+  td.dataset.pages = r.web_pages;
+  if (r.website_status === 'gruppe') td.title = 'Signale der Gruppen-Website';
+  return td;
 }
 
 // Cluster code as a pill plus segment; low confidence is drawn dashed. The

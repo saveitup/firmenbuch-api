@@ -20,7 +20,8 @@
     "compute:at-cashflow": "node scripts/at-cashflow.mjs",
     "classify:at": "node scripts/at-cluster.mjs",
     "discover:at-web": "node --env-file-if-exists=.env scripts/at-website-discovery.mjs",
-    "check:web": "node scripts/check-discovery.mjs"
+    "check:web": "node scripts/check-discovery.mjs && node scripts/check-crawler.mjs",
+    "crawl:at-web": "node scripts/at-web-crawl.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",

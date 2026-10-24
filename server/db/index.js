@@ -35,6 +35,7 @@ export function migrate() {
   addColumnIfMissing(db, 'financials_yearly', 'balance_json', 'TEXT');
   addColumnIfMissing(db, 'financials_yearly', 'guv_json', 'TEXT');
   addColumnIfMissing(db, 'at_jab_ingest', 'role', "TEXT NOT NULL DEFAULT 'latest'");
+  addColumnIfMissing(db, 'web_signals', 'meta_json', 'TEXT');
   return { path: db.name };
 }
 
