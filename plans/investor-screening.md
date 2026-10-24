@@ -513,6 +513,20 @@ Tabelle `at_website`, Tests `npm run check:web`):
   Gründungsjahr („gegründet“, „vor N Jahren gegründet“, Zeitleiste der
   Geschichtsseite, zuletzt „seit“); Webshop nur bei Warenkorb-Funktion;
   B2B-Portal; zweite Führungsebene auf Team-/Über-uns-Seite.
+- Lauf 2026-10-24: 436 von 443 Domains (7 nicht erreichbar), 4 297 Seiten
+  (Ø 9,9), 15,8 MB Text, 4 min. Treffer: Gründungsjahr 273 · Familien-
+  unternehmen 178 (Generation 40) · Zertifikate 200 · Export 177 ·
+  mehrsprachig 216 · Standorte 181 · offene Stellen 149 (Führung 22, GF 0,
+  externes Portal 27) · Gruppenhinweis 53 · zweite Ebene 46 · B2B-Portal 28
+  · Webshop 16 · Nachfolge offen/unklar 6, erfolgt 8.
+- Stichproben: Gründungsjahr, Familie, Zertifikate, Gruppenhinweis
+  plausibel. Nachfolge per Regex bleibt schwach — von 6 „offen“ sind 2
+  fremde Themen (Kundenstory, Berater-Blog) und 2 Floskeln; das ist ein
+  Fall für die LLM-Stufe (Phase 6), die Belege liegen schon vor. Webshop
+  nur über sichtbare Kauf-Buttons, Shopify oder „Shop“-Link + Warenkorb;
+  WooCommerce-Skripte und Theme-Warenkorb-Links allein zählen nicht.
+- Screener: Spalte „Website-Signale“ (Tags, Tooltip = Fundstelle,
+  Sortierung nach Gründungsjahr), Filter „Web-Signal“, Signale in der CSV.
 - Nächster Hebel: Such-API für die ~350 Firmen ohne FN-Treffer
   (`BRAVE_API_KEY` in `.env`, Code vorhanden, ungetestet), danach
   `npm run discover:at-web -- --retry`.

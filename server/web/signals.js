@@ -54,6 +54,7 @@ const SINCE = /\b(?:seit|since)\s+((?:1[6-9]|20)\d\d)\b/i;
 // "Vor mehr als 65 Jahren … gegründet" → about CURRENT_YEAR − 65.
 const YEARS_AGO = /vor\s+(?:mehr als|über|rund|knapp|fast|genau)?\s*(\d{2,3})\s+jahren\s+(?:[^.\n]{0,80}\s)?gegr[uü]ndet|(?:more than|over)?\s*(\d{2,3})\s+years ago[^.\n]{0,40}founded/i;
 
+const BUY_BUTTON = /in den warenkorb|zum warenkorb hinzuf|in den einkaufswagen|add to (?:cart|basket)|jetzt kaufen|buy now/i;
 const B2B_PORTAL = /b2b[- ]?(?:shop|portal|webshop)|h[aä]ndlerportal|h[aä]ndler-?login|fachh[aä]ndler-?login|kundenportal|kunden-?login|dealer portal|partnerportal/i;
 
 const clip = (text, idx, len) => text.slice(Math.max(0, idx - 70), idx + len + 70).replace(/\s+/g, ' ').trim();
@@ -204,8 +205,10 @@ export function extractSignals(pages, meta = {}) {
   const portal = firstMatch(pages, B2B_PORTAL);
   if (portal) cite('b2b_portal', portal.page.url, portal.quote);
   const shop = meta.shop || {};
-  const webshop = Boolean(shop === true || shop.strong || (shop.label && shop.cart));
-  if (webshop) cite('webshop', pages[0]?.url, shop.strong ? 'Kauf-Buttons bzw. Shopify-Shop im HTML' : 'Link „Shop“ und Warenkorb im HTML');
+  const buy = firstMatch(pages, BUY_BUTTON);
+  const webshop = Boolean(buy || shop.shopify || (shop.label && shop.cart));
+  if (buy) cite('webshop', buy.page.url, buy.quote);
+  else if (webshop) cite('webshop', pages[0]?.url, shop.shopify ? 'Shopify-Shop' : 'Link „Shop“ und Warenkorb-Link');
 
   // Team page naming a second management level.
   const team = pages.filter((p) => p.kind === 'team' || p.kind === 'ueber_uns');

@@ -83,7 +83,8 @@ const st = sig([page('standorte', 'Zentrale\n4020 Linz\nNiederlassung 8010 Graz\
 ok(st.standorte === 3, 'Standorte aus PLZ, ohne „1000 Mitarbeiter“', st);
 ok(sig([page('ueber_uns', 'An 12 Standorten in Europa')]).standorte === 12, 'Standorte als Zahl');
 
-ok(sig([page('start', 'x')], { shop: { strong: true } }).webshop === 1, 'Webshop aus Kauf-Buttons');
+ok(sig([page('leistungen', 'Bohrer 8 mm · 12,90 € · In den Warenkorb')]).webshop === 1, 'Webshop aus Kauf-Button-Text');
+ok(sig([page('start', 'x')], { shop: { shopify: true } }).webshop === 1, 'Shopify-Shop');
 ok(sig([page('start', 'x')], { shop: { cart: true } }).webshop === 0, 'Warenkorb-Link allein ist kein Shop');
 ok(sig([page('start', 'x')], { shop: { cart: true, label: true } }).webshop === 1, 'Shop-Link + Warenkorb');
 ok(sig([page('start', 'Zum B2B-Shop für Fachhändler')]).b2b_portal === 1, 'B2B-Portal');
