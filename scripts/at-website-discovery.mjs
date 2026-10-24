@@ -7,7 +7,7 @@
 // Usage: npm run discover:at-web -- [--limit=N] [--recheck] [--retry]
 //                                   [--band=kern|erweitert] [--fn=055036k]
 //   default   only firms without an at_website row
-//   --retry   also re-check 'nicht_gefunden' and 'fehler'
+//   --retry   also re-check every firm without an FN or group match
 //   --recheck re-check every selected firm
 // Other FNs named on a site are resolved locally or via one IWG
 // Kurzinformation call (FIRMENBUCH_TOKEN from .env). With BRAVE_API_KEY in
@@ -36,7 +36,7 @@ firms = firms.filter((r) => {
   if (!e) return true;
   if (e.method === 'manuell') return false;
   if (flag('recheck') || arg('fn')) return true;
-  return flag('retry') && ['nicht_gefunden', 'fehler'].includes(e.status);
+  return flag('retry') && !['fn', 'gruppe'].includes(e.status);
 }).slice(0, LIMIT);
 
 const profile = db.prepare('SELECT plz, homepage FROM at_company_profile WHERE national_id_canon = ?');

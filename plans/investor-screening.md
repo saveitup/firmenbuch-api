@@ -487,6 +487,15 @@ Tabelle `at_website`, Tests `npm run check:web`):
   die nicht erratbaren Domains ist eine Such-API (Suche nach „FN 123456a“).
 - Grenzen: Impressum per JavaScript nachgeladen (z. B. Richter Pharma) →
   nur Name + PLZ; Akronym-Domains, die nicht aus dem Namen folgen.
+- Lauf 2026-10-24 über alle 883 Kernband-Firmen A1–B3 (26 min, 18 370
+  Requests): FN ✓ 380 (43 %) · Gruppe 73 (8 %) · Name + PLZ 79 (9 %) ·
+  blockiert 101 · Namensvetter 85 · nicht gefunden 165. Website gefunden
+  für 60 %, FN-verifiziert 43 % — Exit (≥ 70 % verifiziert) **nicht
+  erreicht**. Unabhängige Firmen: 48 % FN-verifiziert. Stichprobe der
+  FN-Treffer: alle echte Impressum-Angaben.
+- Nächster Hebel: Such-API für die ~350 Firmen ohne FN-Treffer
+  (`BRAVE_API_KEY` in `.env`, Code vorhanden, ungetestet), danach
+  `npm run discover:at-web -- --retry`.
 
 ### Phase 6 — KI-Profil mit clusterabhängiger Tiefe
 

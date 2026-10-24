@@ -25,7 +25,7 @@ const MAX_SUBPAGES = 3;          // Impressum/Kontakt pages per domain
 const fold = (s, umlaut = 'e') => String(s || '').toLowerCase()
   .replace(/ä/g, umlaut === 'e' ? 'ae' : 'a').replace(/ö/g, umlaut === 'e' ? 'oe' : 'o')
   .replace(/ü/g, umlaut === 'e' ? 'ue' : 'u').replace(/ß/g, 'ss')
-  .normalize('NFD').replace(/[̀-ͯ]/g, '');
+  .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
 // Legal forms and connectors, matched on folded text before tokenising.
 const LEGAL_FORM = /\b(gesellschaft\s*m\.?\s*b\.?\s*h\.?|ges\.?\s*m\.?\s*b\.?\s*h\.?|gesmbh|gmbh|m\.\s*b\.\s*h\.?|mbh|aktiengesellschaft|ag|kg|og|keg|oeg|e\.\s*u\.?|se|nfg\.?|co\.?|und|u\.|the|of)(?=\W|$)/g;
@@ -96,7 +96,8 @@ export function htmlToText(html) {
     .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
     .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
     .replace(/&([a-z]+);/gi, (m, n) => ENTITIES[n] ?? m)
-    .replace(/[   ]/g, ' ')
+    .replace(/[\u00a0\u2007\u202f]/g, ' ')
+    .replace(/[\u00ad\u200b\u200c]/g, '')                 // soft hyphens: "Firmen\u00adbuch\u00adnummer"
     .replace(/[ \t]+/g, ' ')
     .replace(/\s*\n\s*/g, '\n')
     .trim();
@@ -104,7 +105,7 @@ export function htmlToText(html) {
 
 // "FN 123456 a", "FN: 123456a", "Firmenbuchnummer 123456 a", "FN-Nr. 123456a",
 // "Commercial register no. 123456 a" — the check letter must be valid.
-const FN_MENTION = /(?:\bfn|\bfbn|firmenbuch[a-z-]*|register(?:ed)?(?: no\.?| number| nr\.?)?|registernummer)\s*[:.\-]?\s*(?:nr\.?|no\.?)?\s*[:.]?\s*(\d{1,6})\s*[-/ ]?\s*([a-z])(?![a-z0-9])/gi;
+const FN_MENTION = /(?:\bfn|\bfbn|\bfbnr|\bcrn|firmenbuch[a-z-]*|register(?:ed)?(?: no\.?| number| nr\.?)?|registernummer)\s*[:.\-]?\s*(?:nr\.?|no\.?)?\s*[:.]?\s*(\d{1,6})\s*[-/ ]?\s*([a-z])(?![a-z0-9])/gi;
 
 export function extractFns(text) {
   const found = new Set();

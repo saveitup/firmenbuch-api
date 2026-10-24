@@ -37,6 +37,8 @@ ok(matchPage('GETEC Gebäudetechnik, 7423 Pinkafeld', firm).level === 'name_plz'
 ok(matchPage('GETEC, 74230 Pinkafeld', firm).level === null, 'PLZ nur als ganze Zahl');
 
 // Page text and links
+ok(htmlToText('Firmen\u00adbuch\u00adnummer') === 'Firmenbuchnummer', 'weiche Trennzeichen entfernt');
+ok(extractFns('FBNr: 166638g · CRN: 120334 m').length === 2, 'FBNr und CRN als FN-Kennung', extractFns('FBNr: 166638g · CRN: 120334 m'));
 ok(htmlToText('<p>FN&nbsp;123</p><script>var fn=1</script>&ensp;x') === 'FN 123\nx', 'HTML-Text ohne Skripte, Entities', JSON.stringify(htmlToText('<p>FN&nbsp;123</p><script>var fn=1</script>&ensp;x')));
 const links = subpageLinks('<a href="/kontakt">Kontakt</a><a href="/de/impressum">Impressum</a><a href="mailto:x@y">Mail</a>', 'https://a.at/');
 ok(links[0] === 'https://a.at/de/impressum' && links.length === 2, 'Impressum vor Kontakt, mailto verworfen', links);
