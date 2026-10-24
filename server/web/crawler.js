@@ -30,9 +30,12 @@ export const PAGE_KINDS = [
 const LANG_PREFIX = /^\/(de|en|fr|it|es|cs|cz|hu|pl|sk|sl|hr|ro|ru|nl|tr|zh|bg|sr|pt|sv|da|fi|no|ja)(?:[-_][a-z]{2})?(?:\/|$)/i;
 const EXTERNAL_JOBS = /(^|\.)(personio\.(de|com)|softgarden\.(io|de)|prescreen\.io|lever\.co|greenhouse\.io|myworkdayjobs\.com|successfactors\.(com|eu)|rexx-systems\.com|dvinci|onlyfy\.(jobs|io)|recruitee\.com|smartrecruiters\.com|join\.com|karriere\.at|jobbase\.io|talentsconnect|umantis\.com|haufe-umantis|jobs\.ams\.at|hokify\.at|stepstone\.at|workwise\.io|bewerbung\.jobs)$/i;
 const JOB_LIST = /offene|stellenangebot|stellenausschreibung|jobs|vacanc|openings|positionen/;
-// Cart actions, not shop-system names: WordPress themes load WooCommerce
-// assets and agencies ship Shopware plugins without selling anything.
-const SHOP_MARKERS = /cdn\.shopify\.com|data-cart|add[-_ ]to[-_ ]cart|in den warenkorb|\/warenkorb|\/checkout\b|\/cart\b/i;
+// A shop shows itself by buy buttons or a Shopify store. A bare /cart link
+// is not enough — WordPress themes put one in the header of logistics and
+// consulting sites — it counts only next to a link labelled "Shop".
+const SHOP_STRONG = /cdn\.shopify\.com|add[-_ ]to[-_ ]cart|in den warenkorb|zum warenkorb hinzuf/i;
+const CART_LINK = /href\s*=\s*["'][^"']*\/(?:warenkorb|cart|checkout)\b/i;
+const SHOP_LABEL = /^(?:zum |zu unserem )?(?:online-?|web-?)?shop$|^shop\b|onlineshop|webshop/i;
 
 const fold = (s) => String(s || '').toLowerCase()
   .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss');
@@ -140,7 +143,8 @@ export async function crawlSite(ctx, startUrl) {
   const pages = [{ url: homeUrl, kind: 'start', title: pageTitle(home.body), text: mainText(home.body, { keepFooter: true }), status: 200 }];
   const meta = {
     languages: siteLanguages(home.body, internal),
-    shop: SHOP_MARKERS.test(home.body),
+    shop: { strong: SHOP_STRONG.test(home.body), cart: CART_LINK.test(home.body),
+      label: [...internal, ...external].some((l) => SHOP_LABEL.test(l.text)) },
     jobsExternal: new Set(external.filter((l) => EXTERNAL_JOBS.test(l.host)).map((l) => l.host)),
     jobLinks: [],
   };
@@ -152,7 +156,7 @@ export async function crawlSite(ctx, startUrl) {
     const r = await ctx.page(p.url);
     if (!r.body) continue;
     pages.push({ url: r.url || p.url, kind: p.kind, title: pageTitle(r.body), text: mainText(r.body), status: 200 });
-    if (SHOP_MARKERS.test(r.body)) meta.shop = true;
+    if (SHOP_STRONG.test(r.body)) meta.shop.strong = true;
     const links = extractLinks(r.body, r.url || p.url);
     for (const l of links.external) if (EXTERNAL_JOBS.test(l.host)) meta.jobsExternal.add(l.host);
     // Job ads usually are links on the career page; their text carries the title.

@@ -269,7 +269,7 @@ CREATE TABLE IF NOT EXISTS web_signals (
   jobs_fuehrung      INTEGER,                          -- of those: Leiter/Head/Management
   jobs_gf            INTEGER,                          -- of those: Geschäftsführung/Nachfolge
   jobs_extern        TEXT,                             -- external job portal (Personio, …)
-  nachfolge          INTEGER,                          -- succession mentioned (0/1)
+  nachfolge          INTEGER,                          -- 0 none · 1 open/unclear (or GF job ad) · 2 already done
   familienunternehmen INTEGER,
   generation         INTEGER,                          -- "in 3. Generation"
   gruppe_hinweis     INTEGER,                          -- "Teil der …-Gruppe" on the site

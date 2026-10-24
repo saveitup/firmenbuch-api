@@ -1297,7 +1297,7 @@ function buildScreenerShell() {
       </select></label>
       <label><span>Web-Signal</span><select name="signal">
         <option value="">Alle</option>
-        <option value="nachfolge">Nachfolge-Hinweis</option>
+        <option value="nachfolge">Nachfolge offen/unklar</option>
         <option value="fuehrung">Führungsstelle ausgeschrieben</option>
         <option value="familie">Familienunternehmen</option>
         <option value="export">Export / international</option>
@@ -1509,7 +1509,9 @@ function webSignalsCell(r) {
   const tags = [
     r.web_gruendung && [`seit ${r.web_gruendung}`, b.gruendungsjahr],
     r.web_generation ? [`${r.web_generation}. Generation`, b.generation] : r.web_familie && ['Familie', b.familienunternehmen],
-    r.web_jobs_gf ? ['GF gesucht', b.jobs_gf, 'hot'] : r.web_nachfolge && ['Nachfolge', b.nachfolge, 'hot'],
+    r.web_jobs_gf ? ['GF gesucht', b.jobs_gf, 'hot']
+      : r.web_nachfolge === 1 ? ['Nachfolge?', b.nachfolge, 'hot']
+      : r.web_nachfolge === 2 && ['Nachfolge erfolgt', b.nachfolge],
     r.web_jobs ? [`${r.web_jobs} Jobs${r.web_jobs_fuehrung ? ` · ${r.web_jobs_fuehrung} Führung` : ''}`, b.jobs_fuehrung || b.jobs]
       : r.web_jobs_extern && ['Jobs extern', r.web_jobs_extern],
     r.web_export && [r.web_export_quote != null ? `Export ${Math.round(r.web_export_quote * 100)} %`
@@ -1520,7 +1522,7 @@ function webSignalsCell(r) {
     r.web_zweite_ebene && ['2. Ebene', b.zweite_ebene],
     r.web_b2b && ['B2B-Portal', b.b2b_portal],
     r.web_gruppe_hinweis && ['Gruppe lt. Website', b.gruppe_hinweis, 'warn'],
-    r.web_shop && ['Webshop', 'Warenkorb/Shop auf der Website — B2C-Hinweis', 'warn'],
+    r.web_shop && ['Webshop', `Online-Bestellung (B2C- oder B2B-Shop) — ${b.webshop || ''}`, 'warn'],
   ].filter(Boolean);
   if (!tags.length) { td.textContent = 'keine'; td.classList.add('muted'); }
   for (const [label, quote, tone] of tags) {

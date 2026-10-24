@@ -10,13 +10,19 @@ const CURRENT_YEAR = new Date().getFullYear();
 // "(m/w/d)", "(w/m/x)", "(m/f/d)", "(all genders)", "(gn*)"
 const GENDER_MARKER = /\((?:[mwdfxi*]\s*[/|,]\s*){1,3}[mwdfxi*]\)|\((?:all genders|alle geschlechter|gn\*?)\)/i;
 // Bau-, Projekt- and Montageleiter are site roles, not management.
-const LEADERSHIP = /f[uü]hrungskraft|(?<!bau|projekt|montage|filial)leit(?:er|erin|ung)\b|head of|director|\bcfo\b|\bceo\b|\bcoo\b|\bcto\b|prokurist/i;
+const LEADERSHIP = /f[uü]hrungskraft|(?<!bau|projekt|montage|filial|reise|schicht)leit(?:er|erin|ung)\b|head of|director|\bcfo\b|\bceo\b|\bcoo\b|\bcto\b|prokurist/i;
 const TOP_ROLE = /gesch[aä]ftsf[uü]hr|gesch[aä]ftsleit|managing director|\bceo\b|\bcfo\b|\bcoo\b|nachfolge|nachfolger|vorstand/i;
 
-const SUCCESSION = /unternehmensnachfolge|nachfolgeregelung|nachfolgeplanung|nachfolger(?:in)?\s+(?:gesucht|f[uü]r)|generationswechsel|generationen(?:wechsel|übergabe)|(?:an|in) die n[aä]chste generation|[uü]bergabe des unternehmens|[uü]bergibt (?:die |das )?(?:gesch[aä]ftsf[uü]hrung|unternehmen|firma)/i;
+// "Nachfolger für den Lüfter X" is a product; "die nächste Generation von
+// Technikern/Projekten" is not ownership.
+const SUCCESSION = /unternehmensnachfolge|nachfolgeregelung|nachfolgeplanung|nachfolger(?:in)?\s+gesucht|suchen (?:eine[nr]? )?nachfolger|generationswechsel|generationen(?:wechsel|übergabe)|(?:an|in) die n[aä]chste generation(?!\s+(?:von|an|der|des|unserer))|[uü]bergabe des unternehmens|[uü]bergibt (?:die |das )?(?:gesch[aä]ftsf[uü]hrung|unternehmen|firma)/i;
 const FAMILY = /familienunternehmen|familiengef[uü]hrt|familienbetrieb|eigent[uü]merge(?:f[uü]hrt|führt)|inhabergef[uü]hrt|family[- ]owned|family business|family company/i;
 const GENERATION = /(?:in|der|die)\s+(\d|zweite[nr]?|dritte[nr]?|vierte[nr]?|f[uü]nfte[nr]?|sechste[nr]?|2\.|3\.|4\.|5\.|6\.)\s*generation|(\d)(?:st|nd|rd|th) generation/i;
 const GENERATION_WORDS = { zweite: 2, dritte: 3, vierte: 4, 'fünfte': 5, funfte: 5, sechste: 6 };
+// Done: "vollzogen", "übernimmt", "ist neuer Eigentümer" — context, not an opening.
+const SUCCESSION_DONE = /vollzogen|abgeschlossen|vollendet|[uü]bernimmt|[uü]bernahm|[uü]bernommen|[uü]bergeben|ist neue[rn]?|sind neue|neue[rn]? (?:gesch[aä]ftsf[uü]hr|eigent[uü]mer|inhaber|alleineigent)|leite[nt] nun|lenken|f[uü]hren nun|in (?:\d\.|zweiter|dritter|vierter|f[uü]nfter) generation gef[uü]hrt/i;
+// "Werden Sie Teil der … Group" recruits; it says nothing about ownership.
+const RECRUITING = /(?:werden sie|werde|become|join|bewirb dich|bewerben sie sich)\W{0,3}$/i;
 const GROUP = /teil der [^.\n]{1,40}(?:gruppe|group|holding)|geh[oö]rt zu(?:r|m)? [^.\n]{1,40}(?:gruppe|group|konzern)|tochter(?:gesellschaft|unternehmen) (?:der|von)|ein unternehmen der [^.\n]{1,40}(?:gruppe|group)|(?:member|part|a company) of the [^.\n]{1,40}group/i;
 
 const EXPORT_QUOTE = /export(?:quote|anteil)\s*(?:von|:|liegt bei|betr[aä]gt)?\s*(?:rund|ca\.?|über|mehr als|knapp)?\s*(\d{1,3})\s*%/i;
@@ -96,7 +102,8 @@ export function extractSignals(pages, meta = {}) {
       const around = p.text.slice(Math.max(0, m.index - 60), m.index + m[0].length + 60);
       const years = [...around.matchAll(/\b(1[6-9]\d\d|20\d\d)\b/g)].map((y) => Number(y[1]));
       if (years.length && Math.max(...years) < CURRENT_YEAR - 5) continue;
-      succ = { page: p, quote: clip(p.text, m.index, m[0].length) };
+      const context = p.text.slice(Math.max(0, m.index - 150), m.index + m[0].length + 150);
+      succ = { page: p, quote: clip(p.text, m.index, m[0].length), done: SUCCESSION_DONE.test(context) };
       break;
     }
     if (succ) break;
@@ -111,7 +118,15 @@ export function extractSignals(pages, meta = {}) {
     generation = Number(raw) || GENERATION_WORDS[raw.replace(/[nr]$/, '')] || null;
     if (generation) cite('generation', gen.page.url, gen.quote);
   }
-  const grp = firstMatch(pages, GROUP);
+  let grp = null;
+  for (const p of pages) {
+    for (const m of p.text.matchAll(new RegExp(GROUP.source, 'gi'))) {
+      if (RECRUITING.test(p.text.slice(Math.max(0, m.index - 25), m.index))) continue;
+      grp = { page: p, quote: clip(p.text, m.index, m[0].length) };
+      break;
+    }
+    if (grp) break;
+  }
   if (grp) cite('gruppe_hinweis', grp.page.url, grp.quote);
 
   // Languages and export.
@@ -188,8 +203,9 @@ export function extractSignals(pages, meta = {}) {
   // Web shop (B2C hint) vs. a B2B portal.
   const portal = firstMatch(pages, B2B_PORTAL);
   if (portal) cite('b2b_portal', portal.page.url, portal.quote);
-  const webshop = Boolean(meta.shop);
-  if (webshop) cite('webshop', pages[0]?.url, 'Shop-Funktion im HTML (Warenkorb/Shop-System)');
+  const shop = meta.shop || {};
+  const webshop = Boolean(shop === true || shop.strong || (shop.label && shop.cart));
+  if (webshop) cite('webshop', pages[0]?.url, shop.strong ? 'Kauf-Buttons bzw. Shopify-Shop im HTML' : 'Link „Shop“ und Warenkorb im HTML');
 
   // Team page naming a second management level.
   const team = pages.filter((p) => p.kind === 'team' || p.kind === 'ueber_uns');
@@ -205,7 +221,8 @@ export function extractSignals(pages, meta = {}) {
       jobs_fuehrung: fuehrung.length,
       jobs_gf: gf.length,
       jobs_extern: (meta.jobsExternal || []).join(', ') || null,
-      nachfolge: succ || gf.length ? 1 : 0,
+      // 1 = open or unclear (incl. a GF job ad), 2 = succession already done.
+      nachfolge: gf.length || (succ && !succ.done) ? 1 : succ ? 2 : 0,
       familienunternehmen: fam || generation ? 1 : 0,
       generation,
       gruppe_hinweis: grp ? 1 : 0,

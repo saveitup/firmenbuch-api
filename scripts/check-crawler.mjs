@@ -48,7 +48,7 @@ const jobs = sig([
 ], { jobLinks: ['Lagerist (all genders)', 'Mehr erfahren'] });
 ok(jobs.jobs === 5, 'Stellen: eindeutige Zeilen mit Gender-Marker', jobs);
 ok(jobs.jobs_fuehrung === 2 && jobs.jobs_gf === 1, 'Führung ohne Bauleiter, GF-Suche erkannt', jobs);
-ok(jobs.nachfolge === 1, 'GF-Ausschreibung zählt als Nachfolge-Hinweis');
+ok(jobs.nachfolge === 1, 'GF-Ausschreibung zählt als offene Nachfolge');
 
 const fam = sig([page('ueber_uns', 'Als Familienunternehmen in dritter Generation sind wir … Seit der Gründung 1898 durch Josef Muster. Gegründet 1923 als Schmiede.')]);
 ok(fam.familienunternehmen === 1 && fam.generation === 3, 'Familienunternehmen + Generation', fam);
@@ -57,7 +57,10 @@ ok(sig([page('start', 'Wir sind seit 1978 Ihr Partner.')]).gruendungsjahr === 19
 ok(sig([page('news', 'Seit 2015 ISO-zertifiziert')]).gruendungsjahr === null, '„seit“ nur auf Start/Über uns');
 ok(sig([page('ueber_uns', '1987 wurde das Unternehmen von Hans Muster gegründet')]).gruendungsjahr === 1987, 'Jahr vor „gegründet“');
 
-ok(sig([page('news', 'Die Unternehmensnachfolge ist geregelt: Anna Muster übernimmt.')]).nachfolge === 1, 'Nachfolge im Text');
+ok(sig([page('news', 'Wir planen die Unternehmensnachfolge und suchen Gespräche.')]).nachfolge === 1, 'Nachfolge offen');
+ok(sig([page('news', 'Die Unternehmensnachfolge ist geregelt: Anna Muster übernimmt.')]).nachfolge === 2, 'Nachfolge erfolgt');
+ok(sig([page('leistungen', 'Der Nachfolger für den Millionenlüfter kommt 2025')]).nachfolge === 0, 'Produkt-Nachfolger zählt nicht');
+ok(sig([page('ueber_uns', 'um unser Know-how an die nächste Generation von Technikern weiterzugeben')]).nachfolge === 0, '„nächste Generation von …“ zählt nicht');
 ok(sig([page('ueber_uns', '1970–1979 Innovation und Generationenwechsel 1972 bei der Firma')]).nachfolge === 0, 'historischer Generationswechsel zählt nicht');
 ok(sig([page('ueber_uns', 'Ruf. 1863 Generationswechsel: Isidor Braun übergibt den Besitz')]).nachfolge === 0, 'auch vor 1900');
 ok(sig([{ kind: 'ueber_uns', url: 'https://x.at/de/geschichte', text: 'Unsere Geschichte\n1951 Gründung des Büros\n1972 Neubau\n2011 BIM' }]).gruendungsjahr === 1951, 'Gründung aus Zeitleiste');
@@ -66,6 +69,7 @@ ok(sig([page('start', 'Seit 2011 setzt FCP auf BIM. Seit 1978 Ihr Partner.')]).g
 ok(sig([page('ueber_uns', 'Vor mehr als 65 Jahren von Kurt Wenzel gegründet. 1999 Gründung der FCP ZT GmbH')]).gruendungsjahr === new Date().getFullYear() - 65, '„vor N Jahren gegründet“');
 ok(sig([page('leistungen', 'Das Nachfolgemodell der Presse X200')]).nachfolge === 0, '„Nachfolgemodell“ ist kein Nachfolge-Hinweis');
 ok(sig([page('ueber_uns', 'Seit 2019 sind wir Teil der Würth-Gruppe.')]).gruppe_hinweis === 1, 'Gruppenzugehörigkeit');
+ok(sig([page('karriere', 'Werden Sie Teil der RICO Group!')]).gruppe_hinweis === 0, 'Recruiting-Floskel ist kein Gruppenhinweis');
 
 const ex = sig([page('ueber_uns', 'Mit einer Exportquote von 85 % liefern wir in über 40 Länder.')], { languages: ['de', 'en', 'fr'] });
 ok(ex.export_quote === 0.85 && ex.export_laender === 40 && ex.export_hinweis === 1, 'Exportquote und Länder', ex);
@@ -79,7 +83,9 @@ const st = sig([page('standorte', 'Zentrale\n4020 Linz\nNiederlassung 8010 Graz\
 ok(st.standorte === 3, 'Standorte aus PLZ, ohne „1000 Mitarbeiter“', st);
 ok(sig([page('ueber_uns', 'An 12 Standorten in Europa')]).standorte === 12, 'Standorte als Zahl');
 
-ok(sig([page('start', 'x')], { shop: true }).webshop === 1, 'Webshop aus HTML-Markern');
+ok(sig([page('start', 'x')], { shop: { strong: true } }).webshop === 1, 'Webshop aus Kauf-Buttons');
+ok(sig([page('start', 'x')], { shop: { cart: true } }).webshop === 0, 'Warenkorb-Link allein ist kein Shop');
+ok(sig([page('start', 'x')], { shop: { cart: true, label: true } }).webshop === 1, 'Shop-Link + Warenkorb');
 ok(sig([page('start', 'Zum B2B-Shop für Fachhändler')]).b2b_portal === 1, 'B2B-Portal');
 ok(sig([page('team', 'Geschäftsführung\nAnna Muster\nVertriebsleiter\nMax Muster\nProkuristin\nEva Muster')]).zweite_ebene === 1, 'zweite Führungsebene');
 
